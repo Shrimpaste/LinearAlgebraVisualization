@@ -1,7 +1,14 @@
 import { useCallback, useMemo, useRef } from "react";
 import { RotateCcw } from "lucide-react";
 import type { SceneProps } from "../../app/types";
-import { addVec2, metricInnerProduct, scaleVec2, type Vec2 } from "../../math";
+import { metricInnerProduct, type Mat2, type Vec2 } from "../../math";
+import {
+  complex,
+  type ComplexMatrix,
+  type ComplexVector,
+  type Dimension,
+  type Field,
+} from "../../math/nd";
 import {
   VisualizationStage,
   type VisualizationPointerEvent,
@@ -9,19 +16,33 @@ import {
   type VisualizationStageHandle,
 } from "../../components/VisualizationStage";
 import { SceneLayout } from "../../components/SceneLayout";
+import { AxiomChecklist } from "../../components/ui/AxiomChecklist";
+import {
+  ComplexMatrixInput,
+  type ComplexMatrixValue,
+} from "../../components/ui/ComplexMatrixInput";
+import {
+  ComplexVectorInput,
+  type ComplexVectorValue,
+} from "../../components/ui/ComplexVectorInput";
 import { ControlSection } from "../../components/ui/ControlSection";
+import {
+  DynamicMatrixInput,
+  type DynamicMatrixValue,
+} from "../../components/ui/DynamicMatrixInput";
+import {
+  DynamicVectorInput,
+  type DynamicVectorValue,
+} from "../../components/ui/DynamicVectorInput";
 import { IconButton } from "../../components/ui/IconButton";
-import { MatrixInput } from "../../components/ui/MatrixInput";
 import { MetricList } from "../../components/ui/MetricList";
 import { Notice } from "../../components/ui/Notice";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SelectField } from "../../components/ui/SelectField";
 import { Toggle } from "../../components/ui/Toggle";
-import { VectorInput } from "../../components/ui/VectorInput";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
-  drawArc,
   drawAxes,
   drawGrid,
   drawInfiniteLine,
@@ -34,31 +55,185 @@ import {
   isWorldPointNearCanvas,
   lerpVec,
 } from "../../rendering";
-import { formatNumber, formatVector } from "../../utils/format";
+import { formatNumber } from "../../utils/format";
+import { formatComplex, formatComplexVector } from "../../utils/formatLinear";
 import {
+  changeInnerProductField,
   deriveInnerProduct,
   innerProductDefaults,
-  metricPresets,
+  metricForPreset,
+  metricPresetOptions,
+  migrateInnerProductState,
+  resizeInnerProductState,
+  type InnerProductMode,
   type MetricPreset,
 } from "./model";
 
-const metricOptions: readonly { value: MetricPreset; label: string }[] = [
-  { value: "euclidean", label: "欧氏内积 I" },
-  { value: "x-weighted", label: "x 方向加权" },
-  { value: "correlated", label: "相关度量" },
-  { value: "custom", label: "自定义 G" },
-];
+const dimensionOptions = [
+  { value: "1", label: "1 维" },
+  { value: "2", label: "2 维" },
+  { value: "3", label: "3 维" },
+] as const;
+
+const complexComponentScale = 0.42;
+
+const modeLabels: Record<InnerProductMode, string> = {
+  projection: "正交投影",
+  "gram-schmidt": "Gram–Schmidt 正交化",
+  axioms: "内积公理验证",
+};
+
+const drawLayers: Record<InnerProductMode, string> = {
+  projection: "orthogonal-projection",
+  "gram-schmidt": "orthonormal-basis",
+  axioms: "axiom-certificate",
+};
+
+function getInnerProductStageContract(
+  field: Field,
+  dimension: Dimension,
+  mode: InnerProductMode,
+) {
+  const observation =
+    field === "C"
+      ? "complex-component-argand"
+      : dimension === 3
+        ? "real-component-2d"
+        : "real-native";
+  const observationLabel =
+    field === "C"
+      ? `逐分量 Argand 相位投影，完整计算保持在 C${dimension}`
+      : dimension === 3
+        ? "R3 分量二维观测投影，完整计算保持在三维空间"
+        : `${dimension} 维实空间几何`;
+
+  return {
+    observation,
+    drawLayer: drawLayers[mode],
+    ariaLabel: `${field}${dimension} 内积的${modeLabels[mode]}；${observationLabel}`,
+    fallbackLabel: `${modeLabels[mode]}。${observationLabel}`,
+  };
+}
+
+function toDimension(value: "1" | "2" | "3"): Dimension {
+  return Number(value) as Dimension;
+}
+
+function toRealVectorInput(
+  value: ComplexVector,
+  size: Dimension,
+): DynamicVectorValue {
+  return { dimension: size, entries: value.map((entry) => entry.re) };
+}
+
+function fromRealVectorInput(value: DynamicVectorValue): ComplexVector {
+  return value.entries.map((entry) => complex(entry));
+}
+
+function toComplexVectorInput(
+  value: ComplexVector,
+  size: Dimension,
+): ComplexVectorValue {
+  return {
+    dimension: size,
+    entries: value.map((entry) => ({ real: entry.re, imag: entry.im })),
+  };
+}
+
+function fromComplexVectorInput(value: ComplexVectorValue): ComplexVector {
+  return value.entries.map((entry) => complex(entry.real, entry.imag));
+}
+
+function toRealMatrixInput(
+  value: ComplexMatrix,
+  size: Dimension,
+): DynamicMatrixValue {
+  return {
+    rows: size,
+    columns: size,
+    entries: value.flat().map((entry) => entry.re),
+  };
+}
+
+function fromRealMatrixInput(value: DynamicMatrixValue): ComplexMatrix {
+  return Array.from({ length: value.rows }, (_, row) =>
+    Array.from({ length: value.columns }, (_, column) =>
+      complex(value.entries[row * value.columns + column] ?? 0),
+    ),
+  );
+}
+
+function toComplexMatrixInput(
+  value: ComplexMatrix,
+  size: Dimension,
+): ComplexMatrixValue {
+  return {
+    rows: size,
+    columns: size,
+    entries: value.flat().map((entry) => ({
+      real: entry.re,
+      imag: entry.im,
+    })),
+  };
+}
+
+function fromComplexMatrixInput(value: ComplexMatrixValue): ComplexMatrix {
+  return Array.from({ length: value.rows }, (_, row) =>
+    Array.from({ length: value.columns }, (_, column) => {
+      const entry = value.entries[row * value.columns + column];
+      return complex(entry?.real ?? 0, entry?.imag ?? 0);
+    }),
+  );
+}
+
+function mat2(metric: ComplexMatrix): Mat2 {
+  return [
+    metric[0]?.[0]?.re ?? 1,
+    metric[0]?.[1]?.re ?? 0,
+    metric[1]?.[0]?.re ?? 0,
+    metric[1]?.[1]?.re ?? 1,
+  ];
+}
+
+function complexComponentOrigin(index: number, count: number): Vec2 {
+  const spacing = count === 1 ? 0 : count === 2 ? 3.2 : 2.55;
+  return [-((count - 1) * spacing) / 2 + index * spacing, 0];
+}
+
+function complexComponentPoint(
+  origin: Vec2,
+  value: { readonly re: number; readonly im: number },
+): Vec2 {
+  return [
+    origin[0] + value.re * complexComponentScale,
+    origin[1] + value.im * complexComponentScale,
+  ];
+}
+
+function projectVector(
+  vector: ComplexVector,
+  field: Field,
+  size: Dimension,
+): Vec2 {
+  if (field === "C") return [vector[0]?.re ?? 0, vector[0]?.im ?? 0];
+  if (size === 3) {
+    return [
+      (vector[0]?.re ?? 0) - 0.55 * (vector[2]?.re ?? 0),
+      (vector[1]?.re ?? 0) + 0.35 * (vector[2]?.re ?? 0),
+    ];
+  }
+  return [vector[0]?.re ?? 0, vector[1]?.re ?? 0];
+}
 
 function drawMetricBall(
   frame: VisualizationRenderFrame,
-  metric: readonly [number, number, number, number],
+  metric: Mat2,
   color: string,
   fill: string,
 ) {
   const points: Vec2[] = [];
-  const samples = 100;
-  for (let index = 0; index < samples; index += 1) {
-    const angle = (index / samples) * Math.PI * 2;
+  for (let index = 0; index < 100; index += 1) {
+    const angle = (index / 100) * Math.PI * 2;
     const direction: Vec2 = [Math.cos(angle), Math.sin(angle)];
     const quadratic = metricInnerProduct(direction, direction, metric);
     if (quadratic <= 0) return;
@@ -72,11 +247,334 @@ function drawMetricBall(
   });
 }
 
+function drawComplexComponents(
+  frame: VisualizationRenderFrame,
+  first: ComplexVector,
+  second: ComplexVector,
+  palette: ReturnType<typeof getCanvasPalette>,
+) {
+  const count = first.length;
+  for (let index = 0; index < count; index += 1) {
+    const origin = complexComponentOrigin(index, count);
+    drawLine(
+      frame.ctx,
+      frame.viewport,
+      [origin[0] - 1.05, origin[1]],
+      [origin[0] + 1.05, origin[1]],
+      { color: palette.axis, width: 1, alpha: 0.6 },
+    );
+    drawLine(
+      frame.ctx,
+      frame.viewport,
+      [origin[0], origin[1] - 1.05],
+      [origin[0], origin[1] + 1.05],
+      { color: palette.axis, width: 1, alpha: 0.6 },
+    );
+    const u = first[index] ?? complex(0);
+    const v = second[index] ?? complex(0);
+    const uEnd = complexComponentPoint(origin, u);
+    const vEnd = complexComponentPoint(origin, v);
+    drawLine(frame.ctx, frame.viewport, origin, uEnd, {
+      color: palette.cyan,
+      width: 2.5,
+    });
+    drawLine(frame.ctx, frame.viewport, origin, vEnd, {
+      color: palette.red,
+      width: 2.5,
+    });
+    drawPoint(
+      frame.ctx,
+      frame.viewport,
+      uEnd,
+      palette.cyan,
+      3.5,
+      true,
+      palette.background,
+    );
+    drawPoint(
+      frame.ctx,
+      frame.viewport,
+      vEnd,
+      palette.red,
+      3.5,
+      true,
+      palette.background,
+    );
+    drawLabel(
+      frame.ctx,
+      frame.viewport,
+      [origin[0], origin[1] - 1.18],
+      "z" + String(index + 1),
+      palette.textSoft,
+      [0, 0],
+    );
+    drawLabel(
+      frame.ctx,
+      frame.viewport,
+      uEnd,
+      "u" + String(index + 1),
+      palette.cyan,
+      [6, -7],
+    );
+    drawLabel(
+      frame.ctx,
+      frame.viewport,
+      vEnd,
+      "v" + String(index + 1),
+      palette.red,
+      [6, 9],
+    );
+  }
+}
+
+type InnerProductDerivation = ReturnType<typeof deriveInnerProduct>;
+
+function drawComplexProjection(
+  frame: VisualizationRenderFrame,
+  derived: InnerProductDerivation,
+  palette: ReturnType<typeof getCanvasPalette>,
+) {
+  if (!derived.projection) return;
+  const count = derived.projection.projection.length;
+  for (let index = 0; index < count; index += 1) {
+    const origin = complexComponentOrigin(index, count);
+    const projection = derived.projection.projection[index] ?? complex(0);
+    const residual = derived.projection.residual[index] ?? complex(0);
+    const projectionTarget = complexComponentPoint(origin, projection);
+    const sumTarget = complexComponentPoint(origin, {
+      re: projection.re + residual.re,
+      im: projection.im + residual.im,
+    });
+    const projectionEnd = lerpVec(
+      origin,
+      projectionTarget,
+      frame.easedProgress,
+    );
+    const sumEnd = lerpVec(origin, sumTarget, frame.easedProgress);
+
+    drawLine(frame.ctx, frame.viewport, origin, projectionEnd, {
+      color: palette.yellow,
+      width: 3,
+    });
+    drawLine(frame.ctx, frame.viewport, projectionEnd, sumEnd, {
+      color: palette.blue,
+      width: 2.2,
+      dash: [5, 4],
+    });
+    drawPoint(
+      frame.ctx,
+      frame.viewport,
+      projectionEnd,
+      palette.yellow,
+      3.5,
+      true,
+      palette.background,
+    );
+    drawLabel(
+      frame.ctx,
+      frame.viewport,
+      projectionEnd,
+      `p${index + 1}`,
+      palette.yellow,
+      [5, -7],
+    );
+    drawLabel(
+      frame.ctx,
+      frame.viewport,
+      sumEnd,
+      `r${index + 1}`,
+      palette.blue,
+      [5, 10],
+    );
+  }
+}
+
+function drawComplexGramSchmidt(
+  frame: VisualizationRenderFrame,
+  first: ComplexVector,
+  second: ComplexVector,
+  derived: InnerProductDerivation,
+  palette: ReturnType<typeof getCanvasPalette>,
+) {
+  const basis = derived.gramSchmidt.orthonormal;
+  const count = first.length;
+  const vectors = [
+    { source: first, target: basis[0], color: palette.blue, label: "q1" },
+    { source: second, target: basis[1], color: palette.yellow, label: "q2" },
+  ] as const;
+
+  vectors.forEach(({ source, target, color, label }) => {
+    if (!target) return;
+    for (let index = 0; index < count; index += 1) {
+      const origin = complexComponentOrigin(index, count);
+      const sourceEnd = complexComponentPoint(
+        origin,
+        source[index] ?? complex(0),
+      );
+      const targetEnd = complexComponentPoint(
+        origin,
+        target[index] ?? complex(0),
+      );
+      const end = lerpVec(sourceEnd, targetEnd, frame.easedProgress);
+      drawLine(frame.ctx, frame.viewport, origin, end, {
+        color,
+        width: 3,
+      });
+      drawPoint(
+        frame.ctx,
+        frame.viewport,
+        end,
+        color,
+        3.5,
+        true,
+        palette.background,
+      );
+      drawLabel(
+        frame.ctx,
+        frame.viewport,
+        end,
+        `${label},${index + 1}`,
+        color,
+        [5, label === "q1" ? -7 : 10],
+      );
+    }
+  });
+}
+
+function drawComponentPhaseArc(
+  frame: VisualizationRenderFrame,
+  origin: Vec2,
+  first: { readonly re: number; readonly im: number },
+  second: { readonly re: number; readonly im: number },
+  color: string,
+  label: string,
+) {
+  if (Math.hypot(first.re, first.im) < 1e-8) return;
+  if (Math.hypot(second.re, second.im) < 1e-8) return;
+  const from = Math.atan2(first.im, first.re);
+  const to = Math.atan2(second.im, second.re);
+  const fullTurn = Math.PI * 2;
+  const delta =
+    ((((to - from + Math.PI) % fullTurn) + fullTurn) % fullTurn) - Math.PI;
+  const animatedEnd = from + delta * frame.easedProgress;
+  const center = frame.viewport.worldToCanvas(origin);
+  const radius = 0.32;
+
+  frame.ctx.save();
+  frame.ctx.strokeStyle = color;
+  frame.ctx.lineWidth = 1.7;
+  frame.ctx.beginPath();
+  frame.ctx.arc(
+    center[0],
+    center[1],
+    radius * frame.viewport.scale,
+    -from,
+    -animatedEnd,
+    delta > 0,
+  );
+  frame.ctx.stroke();
+  frame.ctx.restore();
+
+  const middle = from + (delta * frame.easedProgress) / 2;
+  drawLabel(
+    frame.ctx,
+    frame.viewport,
+    [
+      origin[0] + Math.cos(middle) * (radius + 0.12),
+      origin[1] + Math.sin(middle) * (radius + 0.12),
+    ],
+    label,
+    color,
+    [3, -3],
+  );
+}
+
+function formatAxiomResidual(value: number) {
+  if (value === 0) return "0";
+  return value < 0.001 ? value.toExponential(1) : formatNumber(value);
+}
+
+function drawComplexAxiomCertificate(
+  frame: VisualizationRenderFrame,
+  first: ComplexVector,
+  second: ComplexVector,
+  derived: InnerProductDerivation,
+  palette: ReturnType<typeof getCanvasPalette>,
+) {
+  for (let index = 0; index < first.length; index += 1) {
+    const origin = complexComponentOrigin(index, first.length);
+    const u = first[index] ?? complex(0);
+    const v = second[index] ?? complex(0);
+    const uEnd = complexComponentPoint(origin, u);
+    const vEnd = complexComponentPoint(origin, v);
+    drawLine(frame.ctx, frame.viewport, uEnd, vEnd, {
+      color: palette.neutral,
+      width: 1.2,
+      dash: [3, 4],
+      alpha: 0.7,
+    });
+    drawComponentPhaseArc(
+      frame,
+      origin,
+      u,
+      v,
+      palette.yellow,
+      `Δφ${index + 1}`,
+    );
+  }
+
+  const checks = [
+    ["PD", derived.validation.positiveDefinite],
+    ["ADD", derived.validation.firstSlotAdditivity],
+    ["HOM", derived.validation.firstSlotHomogeneity],
+    ["SYM", derived.validation.conjugateSymmetry],
+  ] as const;
+  const gap = Math.min(96, Math.max(62, (frame.width - 32) / checks.length));
+  const start = frame.width / 2 - (gap * (checks.length - 1)) / 2;
+  frame.ctx.save();
+  frame.ctx.font = '500 9px "IBM Plex Mono", monospace';
+  frame.ctx.textAlign = "center";
+  checks.forEach(([label, check], index) => {
+    frame.ctx.fillStyle = check.passed ? palette.cyan : palette.red;
+    frame.ctx.beginPath();
+    frame.ctx.arc(start + index * gap, frame.height - 27, 3, 0, Math.PI * 2);
+    frame.ctx.fill();
+    frame.ctx.fillText(
+      `${label} ${formatAxiomResidual(check.residual)}`,
+      start + index * gap,
+      frame.height - 13,
+    );
+  });
+  frame.ctx.restore();
+}
+
+function drawComplexModeTitle(
+  frame: VisualizationRenderFrame,
+  dimension: Dimension,
+  mode: InnerProductMode,
+  derived: InnerProductDerivation,
+  palette: ReturnType<typeof getCanvasPalette>,
+) {
+  const detail =
+    mode === "projection"
+      ? "p + r = u"
+      : mode === "gram-schmidt"
+        ? `rank ${derived.gramSchmidt.rank}`
+        : "phase witnesses + residuals";
+  frame.ctx.save();
+  frame.ctx.fillStyle = palette.textSoft;
+  frame.ctx.font = '500 10px "IBM Plex Mono", monospace';
+  frame.ctx.textAlign = "left";
+  frame.ctx.fillText(`C${dimension} ${modeLabels[mode]} · ${detail}`, 15, 21);
+  frame.ctx.restore();
+}
+
 export function InnerProductScene({ theme }: SceneProps) {
   const isMobile = useMediaQuery("(max-width: 760px)");
   const [state, setState, resetState] = useLocalStorage(
     "basis-lab:inner-product",
     innerProductDefaults,
+    migrateInnerProductState,
   );
   const stageRef = useRef<VisualizationStageHandle>(null);
   const dragging = useRef<"first" | "second" | null>(null);
@@ -91,8 +589,46 @@ export function InnerProductScene({ theme }: SceneProps) {
       drawGrid(ctx, viewport, palette);
       drawAxes(ctx, viewport, palette);
 
-      if (state.showMetricCircle && derived.metricAnalysis.isPositiveDefinite) {
-        drawMetricBall(frame, state.metric, palette.blue, palette.blueFill);
+      if (state.field === "C") {
+        drawComplexComponents(frame, state.first, state.second, palette);
+        if (state.mode === "projection") {
+          drawComplexProjection(frame, derived, palette);
+        } else if (state.mode === "gram-schmidt") {
+          drawComplexGramSchmidt(
+            frame,
+            state.first,
+            state.second,
+            derived,
+            palette,
+          );
+        } else {
+          drawComplexAxiomCertificate(
+            frame,
+            state.first,
+            state.second,
+            derived,
+            palette,
+          );
+        }
+        drawComplexModeTitle(
+          frame,
+          state.dimension,
+          state.mode,
+          derived,
+          palette,
+        );
+        return;
+      }
+
+      const first = projectVector(state.first, state.field, state.dimension);
+      const second = projectVector(state.second, state.field, state.dimension);
+      if (state.showMetricCircle && state.dimension === 2 && derived.valid) {
+        drawMetricBall(
+          frame,
+          mat2(state.metric),
+          palette.blue,
+          palette.blueFill,
+        );
         drawLabel(
           ctx,
           viewport,
@@ -103,12 +639,12 @@ export function InnerProductScene({ theme }: SceneProps) {
         );
       }
 
-      drawVector(ctx, viewport, state.first, {
+      drawVector(ctx, viewport, first, {
         color: palette.cyan,
         label: "u",
         width: 2.8,
       });
-      drawVector(ctx, viewport, state.second, {
+      drawVector(ctx, viewport, second, {
         color: palette.red,
         label: "v",
         width: 2.8,
@@ -116,7 +652,7 @@ export function InnerProductScene({ theme }: SceneProps) {
       drawPoint(
         ctx,
         viewport,
-        state.first,
+        first,
         palette.cyan,
         4,
         true,
@@ -125,104 +661,84 @@ export function InnerProductScene({ theme }: SceneProps) {
       drawPoint(
         ctx,
         viewport,
-        state.second,
+        second,
         palette.red,
         4,
         true,
         palette.background,
       );
 
-      if (state.mode === "projection" && derived.projection) {
-        const projection = lerpVec(
+      if (state.dimension === 3) {
+        drawLabel(
+          ctx,
+          viewport,
+          [-3.8, 2.65],
+          "R3 分量二维观测 · 数值证书保持三维",
+          palette.textSoft,
           [0, 0],
+        );
+      }
+
+      if (state.mode === "projection" && derived.projection) {
+        const projected = projectVector(
           derived.projection.projection,
-          easedProgress,
+          state.field,
+          state.dimension,
         );
-        const residualStart = projection;
-        const residualEnd = addVec2(
-          projection,
-          scaleVec2(derived.projection.residual, easedProgress),
+        const projectionPoint = lerpVec([0, 0], projected, easedProgress);
+        const residualTarget = projectVector(
+          derived.projection.residual,
+          state.field,
+          state.dimension,
         );
-        drawInfiniteLine(ctx, viewport, state.second, {
+        const residualEnd: Vec2 = [
+          projectionPoint[0] + residualTarget[0] * easedProgress,
+          projectionPoint[1] + residualTarget[1] * easedProgress,
+        ];
+        drawInfiniteLine(ctx, viewport, second, {
           color: palette.red,
           width: 1,
           dash: [6, 5],
           alpha: 0.5,
         });
-        drawVector(ctx, viewport, projection, {
+        drawVector(ctx, viewport, projectionPoint, {
           color: palette.yellow,
           label: "projᵥu",
           width: 2.8,
         });
-        drawLine(ctx, viewport, residualStart, residualEnd, {
+        drawLine(ctx, viewport, projectionPoint, residualEnd, {
           color: palette.blue,
           width: 2,
           dash: [5, 4],
         });
-        drawLabel(
-          ctx,
-          viewport,
-          residualEnd,
-          "正交残差",
-          palette.blue,
-          [8, 10],
-        );
-        drawLabel(ctx, viewport, projection, "⟂G", palette.yellow, [7, -8]);
-
-        if (state.metricPreset === "euclidean" && derived.angle) {
-          const firstAngle = Math.atan2(state.first[1], state.first[0]);
-          const secondAngle = Math.atan2(state.second[1], state.second[0]);
-          drawArc(
-            ctx,
-            viewport,
-            0.55,
-            secondAngle,
-            firstAngle,
-            palette.yellow,
-            `${formatNumber(derived.angle.degrees)}°`,
-          );
-        }
       }
 
-      if (
-        state.mode === "gram-schmidt" &&
-        derived.gramSchmidt.kind !== "invalid-metric"
-      ) {
-        const first = derived.gramSchmidt.steps[0]?.normalized;
-        const second = derived.gramSchmidt.steps[1]?.normalized;
-        if (first) {
+      if (state.mode === "gram-schmidt") {
+        const firstBasis = derived.gramSchmidt.orthonormal[0];
+        const secondBasis = derived.gramSchmidt.orthonormal[1];
+        if (firstBasis) {
           drawVector(
             ctx,
             viewport,
-            lerpVec(state.first, first, easedProgress),
-            {
-              color: palette.blue,
-              label: "q₁",
-              width: 3,
-            },
+            lerpVec(
+              first,
+              projectVector(firstBasis, state.field, state.dimension),
+              easedProgress,
+            ),
+            { color: palette.blue, label: "q1", width: 3 },
           );
         }
-        if (second) {
+        if (secondBasis) {
           drawVector(
             ctx,
             viewport,
-            lerpVec(state.second, second, easedProgress),
-            {
-              color: palette.yellow,
-              label: "q₂",
-              width: 3,
-            },
+            lerpVec(
+              second,
+              projectVector(secondBasis, state.field, state.dimension),
+              easedProgress,
+            ),
+            { color: palette.yellow, label: "q2", width: 3 },
           );
-        }
-        const step = derived.gramSchmidt.steps[1];
-        const projection = step?.projections[0]?.vector;
-        if (projection) {
-          drawVector(ctx, viewport, projection, {
-            color: palette.neutral,
-            label: "被移除分量",
-            width: 1.4,
-            dash: [5, 4],
-          });
         }
       }
     },
@@ -231,167 +747,357 @@ export function InnerProductScene({ theme }: SceneProps) {
 
   const onPointerDown = useCallback(
     (event: VisualizationPointerEvent) => {
-      if (isWorldPointNearCanvas(state.first, event.canvas, event.viewport))
+      if (state.field !== "R" || state.dimension !== 2) return false;
+      if (
+        isWorldPointNearCanvas(
+          projectVector(state.first, state.field, state.dimension),
+          event.canvas,
+          event.viewport,
+        )
+      ) {
         dragging.current = "first";
-      else if (
-        isWorldPointNearCanvas(state.second, event.canvas, event.viewport)
-      )
+      } else if (
+        isWorldPointNearCanvas(
+          projectVector(state.second, state.field, state.dimension),
+          event.canvas,
+          event.viewport,
+        )
+      ) {
         dragging.current = "second";
-      else return false;
+      } else {
+        return false;
+      }
       return true;
     },
-    [state.first, state.second],
+    [state],
   );
 
   const onPointerMove = useCallback(
     (event: VisualizationPointerEvent) => {
       const key = dragging.current;
       if (!key) return;
-      setState((current) => ({ ...current, [key]: event.world }));
+      setState((current) => ({
+        ...current,
+        [key]: [complex(event.world[0]), complex(event.world[1])],
+      }));
     },
     [setState],
   );
 
-  const stopDragging = () => {
+  const stopDragging = useCallback(() => {
     dragging.current = null;
-  };
+  }, []);
 
   const selectMetric = (metricPreset: MetricPreset) => {
     const metric =
-      metricPreset === "custom" ? state.metric : metricPresets[metricPreset];
+      metricPreset === "custom"
+        ? state.metric
+        : metricForPreset(metricPreset, state.field, state.dimension);
     setState((current) => ({ ...current, metricPreset, metric }));
     window.setTimeout(() => stageRef.current?.replay(), 0);
   };
 
-  const metricValid = derived.metricAnalysis.isPositiveDefinite;
-  const angleText = derived.angle
-    ? `${formatNumber(derived.angle.degrees)}°`
-    : "未定义";
   const formulaText =
     derived.innerProduct === null
       ? "未定义"
-      : formatNumber(derived.innerProduct);
+      : state.field === "R"
+        ? formatNumber(derived.innerProduct.re)
+        : formatComplex(derived.innerProduct);
+  const angleText =
+    derived.angleDegrees === null
+      ? "未定义"
+      : formatNumber(derived.angleDegrees) + "°";
+  const normText = (value: number | null) =>
+    value === null ? "—" : formatNumber(value);
+  const axiomItems = [
+    {
+      id: "positive",
+      label: "正定性",
+      passed: derived.validation.positiveDefinite.passed,
+      residual: derived.validation.positiveDefinite.residual,
+      detail: "⟨x,x⟩ > 0，且仅零向量取零",
+    },
+    {
+      id: "additivity",
+      label: "第一槽加性",
+      passed: derived.validation.firstSlotAdditivity.passed,
+      residual: derived.validation.firstSlotAdditivity.residual,
+      detail: "⟨x+z,y⟩ = ⟨x,y⟩ + ⟨z,y⟩",
+    },
+    {
+      id: "homogeneity",
+      label: "第一槽齐性",
+      passed: derived.validation.firstSlotHomogeneity.passed,
+      residual: derived.validation.firstSlotHomogeneity.residual,
+      detail: "⟨αx,y⟩ = α⟨x,y⟩",
+    },
+    {
+      id: "conjugate",
+      label: "交换共轭",
+      passed: derived.validation.conjugateSymmetry.passed,
+      residual: derived.validation.conjugateSymmetry.residual,
+      detail: "⟨x,y⟩ = overline(⟨y,x⟩)",
+    },
+  ];
+  const presetOptions = metricPresetOptions(state.field) as readonly {
+    value: MetricPreset;
+    label: string;
+  }[];
+  const stageContract = getInnerProductStageContract(
+    state.field,
+    state.dimension,
+    state.mode,
+  );
 
   return (
     <SceneLayout
       id="inner-product"
       index="04"
       title="内积空间"
-      subtitle="重定义长度、角度与投影"
-      formulaLabel="度量内积"
-      formula={<>⟨u, v⟩G = uᵀGv = {formulaText}</>}
-      formulaStatus={metricValid ? `θG = ${angleText}` : "G 无效"}
-      formulaTone={
-        !metricValid ? "negative" : derived.angle ? "positive" : "warning"
+      subtitle={
+        state.field + String(state.dimension) + " · 自定义 Gram 矩阵与公理验证"
       }
+      formulaLabel="内积定义"
+      formula={
+        <>
+          ⟨u,v⟩G = {state.field === "C" ? "v*Gu" : "vᵀGu"} = {formulaText}
+        </>
+      }
+      formulaStatus={derived.valid ? "四条公理成立" : "G 无效"}
+      formulaTone={derived.valid ? "positive" : "negative"}
       insight={
-        !metricValid ? (
+        !derived.valid ? (
           <>
-            <strong>有效内积要求 G 对称正定。</strong>{" "}
-            当前矩阵无法定义所有非零向量的正长度。
+            <strong>线性公式并不自动成为内积。</strong>{" "}
+            正定性与交换共轭必须同时成立；残差给出失败证书。
           </>
-        ) : state.mode === "projection" ? (
+        ) : state.mode === "axioms" ? (
           <>
-            <strong>残差与投影方向在 G 度量下正交。</strong> 改变 G
-            会改变“最近点”的几何含义。
+            <strong>本工具采用第一槽线性约定。</strong>{" "}
+            在复数域中交换两个输入时必须同时取共轭。
+          </>
+        ) : state.field === "C" ? (
+          <>
+            <strong>复空间的完整实维数是两倍。</strong> 舞台只显示每个分量的
+            Argand 投影，数值证书在完整空间计算。
           </>
         ) : (
           <>
-            <strong>Gram–Schmidt 逐步移除已有方向分量。</strong> 输出向量在 G
-            度量下单位正交。
+            <strong>Gram 矩阵重定义长度、角度和正交。</strong> 合法 G
+            的单位球可能成为旋转的椭球。
           </>
         )
       }
       stage={
-        <VisualizationStage
-          key={isMobile ? "mobile" : "desktop"}
-          ref={stageRef}
-          render={render}
-          renderKey={state}
-          viewport={{
-            scale: isMobile ? 54 : 78,
-            center: isMobile ? [0, 0.3] : [0, 0],
-          }}
-          duration={1050}
-          ariaLabel="内积度量下的向量夹角、投影和正交化"
-          fallbackDescription={`向量 u=${formatVector(state.first)}，v=${formatVector(state.second)}，内积为 ${formulaText}。`}
-          showExportButton
-          exportFilename="basis-lab-inner-product.png"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={stopDragging}
-          onPointerCancel={stopDragging}
-        />
+        <div
+          className="dimension-stage inner-product-stage"
+          data-testid="inner-product-stage-contract"
+          data-field={state.field}
+          data-mode={state.mode}
+          data-observation={stageContract.observation}
+          data-draw-layer={stageContract.drawLayer}
+        >
+          <VisualizationStage
+            key={
+              (isMobile ? "mobile" : "desktop") +
+              "-" +
+              state.field +
+              "-" +
+              String(state.dimension)
+            }
+            ref={stageRef}
+            render={render}
+            renderKey={state}
+            viewport={{
+              scale: isMobile ? 48 : 72,
+              center: isMobile ? [0, 0.25] : [0, 0],
+            }}
+            duration={1050}
+            ariaLabel={stageContract.ariaLabel}
+            fallbackDescription={
+              stageContract.fallbackLabel +
+              "。u=" +
+              formatComplexVector(state.first) +
+              "，v=" +
+              formatComplexVector(state.second) +
+              "，内积为 " +
+              formulaText +
+              "。"
+            }
+            showExportButton
+            exportFilename="basis-lab-inner-product.png"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={stopDragging}
+            onPointerCancel={stopDragging}
+          />
+        </div>
       }
       inspector={
         <>
           <ControlSection
-            title="向量与模式"
-            caption="端点可在画布中直接拖动"
+            title="空间与向量"
+            caption={
+              state.field === "C"
+                ? "实部/虚部独立编辑，完整空间按复维数计算"
+                : state.dimension === 2
+                  ? "端点可在画布中直接拖动"
+                  : "舞台使用低维投影，读数保持完整维数"
+            }
             action={
               <IconButton label="恢复默认内积实验" onClick={resetState}>
                 <RotateCcw size={15} />
               </IconButton>
             }
           >
-            <SegmentedControl
+            <div className="dimension-row">
+              <SegmentedControl<Field>
+                label="标量域"
+                value={state.field}
+                options={[
+                  { value: "R", label: "实数 R" },
+                  { value: "C", label: "复数 C" },
+                ]}
+                onChange={(field) =>
+                  setState((current) => changeInnerProductField(current, field))
+                }
+              />
+              <SelectField
+                label="空间维数"
+                value={String(state.dimension) as "1" | "2" | "3"}
+                options={dimensionOptions}
+                onChange={(value) =>
+                  setState((current) =>
+                    resizeInnerProductState(current, toDimension(value)),
+                  )
+                }
+              />
+            </div>
+            <SegmentedControl<InnerProductMode>
               label="内积实验模式"
               value={state.mode}
               options={[
                 { value: "projection", label: "投影" },
                 { value: "gram-schmidt", label: "Gram–Schmidt" },
+                { value: "axioms", label: "公理验证" },
               ]}
               onChange={(mode) => {
                 setState((current) => ({ ...current, mode }));
                 window.setTimeout(() => stageRef.current?.replay(), 0);
               }}
             />
-            <VectorInput
-              label="u"
-              name="first"
-              value={state.first}
-              onChange={(first) =>
-                setState((current) => ({ ...current, first }))
-              }
-            />
-            <VectorInput
-              label="v"
-              name="second"
-              tone="red"
-              value={state.second}
-              onChange={(second) =>
-                setState((current) => ({ ...current, second }))
-              }
-            />
+            {state.field === "R" ? (
+              <>
+                <DynamicVectorInput
+                  label="u"
+                  name="first"
+                  value={toRealVectorInput(state.first, state.dimension)}
+                  onChange={(first) =>
+                    setState((current) => ({
+                      ...current,
+                      first: fromRealVectorInput(first),
+                    }))
+                  }
+                />
+                <DynamicVectorInput
+                  label="v"
+                  name="second"
+                  tone="red"
+                  value={toRealVectorInput(state.second, state.dimension)}
+                  onChange={(second) =>
+                    setState((current) => ({
+                      ...current,
+                      second: fromRealVectorInput(second),
+                    }))
+                  }
+                />
+              </>
+            ) : (
+              <>
+                <ComplexVectorInput
+                  label="u"
+                  name="first"
+                  value={toComplexVectorInput(state.first, state.dimension)}
+                  onChange={(first) =>
+                    setState((current) => ({
+                      ...current,
+                      first: fromComplexVectorInput(first),
+                    }))
+                  }
+                />
+                <ComplexVectorInput
+                  label="v"
+                  name="second"
+                  tone="red"
+                  value={toComplexVectorInput(state.second, state.dimension)}
+                  onChange={(second) =>
+                    setState((current) => ({
+                      ...current,
+                      second: fromComplexVectorInput(second),
+                    }))
+                  }
+                />
+              </>
+            )}
           </ControlSection>
 
-          <ControlSection title="度量矩阵" caption="G 必须是对称正定矩阵">
+          <ControlSection
+            title="Gram 定义"
+            caption={
+              state.field === "C"
+                ? "⟨x,y⟩ = y*Gx；G 必须 Hermitian 正定"
+                : "⟨x,y⟩ = yᵀGx；G 必须对称正定"
+            }
+          >
             <SelectField
               label="内积度量"
               value={state.metricPreset}
-              options={metricOptions}
+              options={presetOptions}
               onChange={selectMetric}
             />
-            <MatrixInput
-              label="度量矩阵"
-              symbol="G"
-              value={state.metric}
-              disabled={state.metricPreset !== "custom"}
-              onChange={(metric) =>
-                setState((current) => ({
-                  ...current,
-                  metricPreset: "custom",
-                  metric,
-                }))
-              }
-            />
-            <Toggle
-              label="显示度量单位圆"
-              checked={state.showMetricCircle}
-              onChange={(showMetricCircle) =>
-                setState((current) => ({ ...current, showMetricCircle }))
-              }
-            />
+            {state.field === "R" ? (
+              <DynamicMatrixInput
+                label="度量矩阵"
+                symbol="G"
+                value={toRealMatrixInput(state.metric, state.dimension)}
+                disabled={state.metricPreset !== "custom"}
+                onChange={(metric) =>
+                  setState((current) => ({
+                    ...current,
+                    metricPreset: "custom",
+                    metric: fromRealMatrixInput(metric),
+                  }))
+                }
+              />
+            ) : (
+              <ComplexMatrixInput
+                label="度量矩阵"
+                symbol="G"
+                value={toComplexMatrixInput(state.metric, state.dimension)}
+                disabled={state.metricPreset !== "custom"}
+                testId="complex-metric-cell"
+                onChange={(metric) =>
+                  setState((current) => ({
+                    ...current,
+                    metricPreset: "custom",
+                    metric: fromComplexMatrixInput(metric),
+                  }))
+                }
+              />
+            )}
+            {state.field === "R" && state.dimension === 2 && (
+              <Toggle
+                label="显示度量单位圆"
+                checked={state.showMetricCircle}
+                onChange={(showMetricCircle) =>
+                  setState((current) => ({ ...current, showMetricCircle }))
+                }
+              />
+            )}
+          </ControlSection>
+
+          <ControlSection title="四条合法性条件">
+            <AxiomChecklist label="内积公理验证" items={axiomItems} />
           </ControlSection>
 
           <ControlSection title="内积读数">
@@ -405,27 +1111,30 @@ export function InnerProductScene({ theme }: SceneProps) {
                 },
                 {
                   label: "‖u‖G",
-                  value:
-                    derived.firstNorm === null
-                      ? "—"
-                      : formatNumber(derived.firstNorm),
+                  value: normText(derived.firstNorm),
                   key: "norm-u",
                 },
                 {
                   label: "‖v‖G",
-                  value:
-                    derived.secondNorm === null
-                      ? "—"
-                      : formatNumber(derived.secondNorm),
+                  value: normText(derived.secondNorm),
                   key: "norm-v",
                 },
                 { label: "θG", value: angleText, key: "angle", tone: "yellow" },
+                {
+                  label: "GS rank",
+                  value: derived.valid ? String(derived.gramSchmidt.rank) : "—",
+                  key: "gram-rank",
+                },
               ]}
             />
-            {!metricValid ? (
-              <Notice tone="warning">当前 G 不是对称正定矩阵。</Notice>
+            {!derived.valid ? (
+              <Notice tone="warning">
+                {state.field === "R"
+                  ? "当前 G 不是对称正定矩阵。"
+                  : "当前 G 不是 Hermitian 正定矩阵。"}
+              </Notice>
             ) : state.mode === "gram-schmidt" &&
-              derived.gramSchmidt.rank < 2 ? (
+              derived.gramSchmidt.rank < Math.min(2, state.dimension) ? (
               <Notice tone="warning">
                 输入向量线性相关，无法产生两条正交方向。
               </Notice>

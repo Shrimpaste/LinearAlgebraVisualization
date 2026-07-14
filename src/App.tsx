@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Check, Copy, Moon, Sun } from "lucide-react";
 import { isSceneId, scenes } from "./app/sceneRegistry";
 import type { SceneId, ThemeMode } from "./app/types";
@@ -12,6 +19,11 @@ function sceneFromHash(): SceneId {
 
 export function App() {
   const [activeScene, setActiveScene] = useState<SceneId>(sceneFromHash);
+  const navigationRef = useRef<HTMLElement>(null);
+  const appContentRef = useRef<HTMLDivElement>(null);
+  const pendingPageScrollRef = useRef<{ left: number; top: number } | null>(
+    null,
+  );
   const [theme, setTheme] = useLocalStorage<ThemeMode>(
     "basis-lab:theme",
     "light",
@@ -26,7 +38,13 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
-    const onHashChange = () => setActiveScene(sceneFromHash());
+    const onHashChange = () => {
+      pendingPageScrollRef.current = {
+        left: window.scrollX,
+        top: window.scrollY,
+      };
+      setActiveScene(sceneFromHash());
+    };
     window.addEventListener("hashchange", onHashChange);
     window.addEventListener("popstate", onHashChange);
     if (!window.location.hash)
@@ -42,7 +60,76 @@ export function App() {
     [activeScene],
   );
 
+  useLayoutEffect(() => {
+    const navigation = navigationRef.current;
+    const activeButton = navigation?.querySelector<HTMLElement>(
+      `[data-scene-id="${activeScene}"]`,
+    );
+    if (navigation && activeButton) {
+      const navigationRect = navigation.getBoundingClientRect();
+      const activeRect = activeButton.getBoundingClientRect();
+      const activeCenter =
+        navigation.scrollLeft +
+        activeRect.left -
+        navigationRect.left +
+        activeRect.width / 2;
+      const maximumScroll = Math.max(
+        0,
+        navigation.scrollWidth - navigation.clientWidth,
+      );
+      const targetLeft = Math.min(
+        maximumScroll,
+        Math.max(0, activeCenter - navigation.clientWidth / 2),
+      );
+
+      navigation.scrollTo({
+        left: targetLeft,
+        top: navigation.scrollTop,
+        behavior: "auto",
+      });
+    }
+
+    let restoreFrame = 0;
+    let contentObserver: MutationObserver | null = null;
+    const restorePageScroll = () => {
+      const pendingPageScroll = pendingPageScrollRef.current;
+      if (!pendingPageScroll || restoreFrame) return;
+      restoreFrame = window.requestAnimationFrame(() => {
+        window.scrollTo({ ...pendingPageScroll, behavior: "auto" });
+        pendingPageScrollRef.current = null;
+        contentObserver?.disconnect();
+      });
+    };
+    const sceneIsReady = () =>
+      Boolean(
+        appContentRef.current?.querySelector(`[data-module="${activeScene}"]`),
+      );
+
+    if (pendingPageScrollRef.current) {
+      if (sceneIsReady()) {
+        restorePageScroll();
+      } else if (appContentRef.current) {
+        contentObserver = new MutationObserver(() => {
+          if (sceneIsReady()) restorePageScroll();
+        });
+        contentObserver.observe(appContentRef.current, {
+          childList: true,
+          subtree: true,
+        });
+      }
+    }
+
+    return () => {
+      contentObserver?.disconnect();
+      window.cancelAnimationFrame(restoreFrame);
+    };
+  }, [activeScene]);
+
   const selectScene = (id: SceneId) => {
+    pendingPageScrollRef.current = {
+      left: window.scrollX,
+      top: window.scrollY,
+    };
     setActiveScene(id);
     window.history.pushState(null, "", `#${id}`);
   };
@@ -67,8 +154,8 @@ export function App() {
           <span className="brand__latin">BASIS LAB</span>
         </div>
         <div className="header-context">
-          <span>R²</span>
-          <span>2 × 2 MATRIX SYSTEM</span>
+          <span>R / C</span>
+          <span>1–3D MATRIX WORKBENCH · v1.2.0-beta.1 · 待进一步测试优化</span>
         </div>
         <div className="header-actions">
           <IconButton
@@ -86,13 +173,14 @@ export function App() {
         </div>
       </header>
 
-      <nav className="scene-nav" aria-label="线性代数主题">
+      <nav ref={navigationRef} className="scene-nav" aria-label="线性代数主题">
         <div className="scene-nav__inner">
           {scenes.map((scene) => (
             <button
               type="button"
               key={scene.id}
               className="scene-nav__item"
+              data-scene-id={scene.id}
               data-active={activeScene === scene.id || undefined}
               aria-current={activeScene === scene.id ? "page" : undefined}
               onClick={() => selectScene(scene.id)}
@@ -104,8 +192,17 @@ export function App() {
         </div>
       </nav>
 
-      <div className="app-content" key={current.id}>
-        <ActiveScene theme={theme} />
+      <div ref={appContentRef} className="app-content" key={current.id}>
+        <Suspense
+          fallback={
+            <main className="scene-loading-view" role="status">
+              <span>正在装载计算模块</span>
+              <i aria-hidden="true" />
+            </main>
+          }
+        >
+          <ActiveScene theme={theme} />
+        </Suspense>
       </div>
     </div>
   );

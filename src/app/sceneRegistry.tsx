@@ -1,9 +1,21 @@
+import { lazy } from "react";
 import type { SceneMeta } from "./types";
 import { DeterminantScene } from "../scenes/determinant/DeterminantScene";
 import { EigenScene } from "../scenes/eigen/EigenScene";
 import { InnerProductScene } from "../scenes/inner-product/InnerProductScene";
 import { SpanScene } from "../scenes/span/SpanScene";
 import { TransformScene } from "../scenes/transform/TransformScene";
+
+const OperatorScene = lazy(() =>
+  import("../scenes/operator/OperatorScene").then((module) => ({
+    default: module.OperatorScene,
+  })),
+);
+const DecompositionScene = lazy(() =>
+  import("../scenes/decomposition/DecompositionScene").then((module) => ({
+    default: module.DecompositionScene,
+  })),
+);
 
 export const scenes: readonly SceneMeta[] = [
   {
@@ -45,6 +57,22 @@ export const scenes: readonly SceneMeta[] = [
     shortLabel: "行列式",
     subtitle: "读取面积缩放与空间定向",
     component: DeterminantScene,
+  },
+  {
+    id: "operator",
+    index: "06",
+    label: "谱分解",
+    shortLabel: "谱定理",
+    subtitle: "检验自伴与正规，并构造酉对角化",
+    component: OperatorScene,
+  },
+  {
+    id: "decomposition",
+    index: "07",
+    label: "矩阵分解",
+    shortLabel: "SVD / 极",
+    subtitle: "拆解主方向、伸缩与定向",
+    component: DecompositionScene,
   },
 ] as const;
 

@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 
-export function useLocalStorage<T>(key: string, initialValue: T) {
+export type LocalStorageMigration<T> = (stored: unknown) => T;
+
+export function useLocalStorage<T>(
+  key: string,
+  initialValue: T,
+  migrate?: LocalStorageMigration<T>,
+) {
   const [value, setValue] = useState<T>(() => {
     try {
       const stored = window.localStorage.getItem(key);
-      return stored === null ? initialValue : (JSON.parse(stored) as T);
+      if (stored === null) return initialValue;
+      const parsed: unknown = JSON.parse(stored);
+      return migrate ? migrate(parsed) : (parsed as T);
     } catch {
       return initialValue;
     }

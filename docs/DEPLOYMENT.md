@@ -46,14 +46,15 @@ npm run verify:full
 npm run preview
 ```
 
-打开 Vite 输出的本地预览地址，确认五个 hash 场景、主题切换、动画、输入、拖动与 PNG 导出工作正常。构建后的 `dist/index.html` 应引用 `./assets/...`，确保项目页子路径不被解析为站点根路径。
+打开 Vite 输出的本地预览地址，确认七个 hash 场景、主题切换、动画、输入、拖动与 PNG 导出工作正常，并确认浏览器控制台无错误或警告。张成场景应检查 1–6 个向量、全部系数与自动基；变换场景应在 Canvas 和 Three.js 中检查 `T₂∘T₁` 的 `I → T₁ → T₂T₁` 顺序；特征场景应检查单一基 `B` 下的 `B⁻¹AB` 及无效基提示。对 3D 变换和分解还要检查 WebGL 像素、轨道相机和窗口缩放。构建后的 `dist/index.html` 应引用 `./assets/...`，确保项目页子路径不被解析为站点根路径。
 
 部署成功后执行一次线上 smoke test：
 
-1. 打开标准地址，确认页面和 Canvas 非空且浏览器控制台无错误。
-2. 依次访问 `#span`、`#transform`、`#eigen`、`#inner-product`、`#determinant`。
-3. 修改一个数值、播放一次动画、切换主题并刷新，确认 hash 与本地状态恢复。
-4. 在移动视口检查导航、画布尺寸与控制面板，并确认 Network 中脚本、样式和字体均为 200。
+1. 打开标准地址，确认页面和 Canvas 非空且浏览器控制台无错误或警告。
+2. 依次访问 `#span`、`#transform`、`#eigen`、`#inner-product`、`#determinant`、`#operator`、`#decomposition`。
+3. 在张成场景选择冗余向量组并切到 6 个向量，确认 rank、自动基和全部编辑器；在线性变换场景依次检查 Canvas/Three 复合时间轴的中点与终点；在特征场景输入一个合法及一个退化基。
+4. 修改一个数值、播放一次动画、切换主题并刷新，确认 hash 与各场景本地状态恢复。
+5. 在移动视口检查导航、画布尺寸与控制面板，并确认 Network 中脚本、样式和字体均为 200。
 
 ## 手动重发
 
@@ -88,7 +89,7 @@ git push origin main
 
 先在本地检查回退 diff 并通过完整验收；团队仓库应通过紧急 Pull Request 合并回退，只有直接维护者流程才推送 `main`。新的工作流会重新构建并部署回退后的代码，同时保留完整历史。不要强制推送、重置 `main` 或直接覆盖 Pages artifact。
 
-场景状态保存在 `basis-lab:*` localStorage 键中，目前没有 schema 迁移。如果回滚跨越了状态结构变化，应在发布说明中要求用户使用场景的复位操作；仍异常时，可在该站点的浏览器控制台执行：
+场景状态和主题保存在 `basis-lab:*` localStorage 命名空间中。当前 schema 为线性变换 v3、内积 v2、向量张成/特征系统/谱分解/矩阵分解 v1；只有行列式仍未版本化。已知迁移路径包括：线性变换的未版本化/v1/v2 状态迁至 v3，内积的未版本化/v1 状态迁至 v2，向量张成与特征系统的未版本化状态迁至 v1，谱分解与矩阵分解的未版本化状态规范化为 v1。初始化时，迁移器只迁移缺失版本或已知旧版本，重新校验并规范化当前版本，遇到未来版本或其他不识别版本则回到当前默认值。若回滚到不识别新 schema 的旧版本，应在发布说明中要求用户使用场景的复位操作；仍异常时，可在该站点的浏览器控制台执行：
 
 ```js
 Object.keys(localStorage)
@@ -96,6 +97,8 @@ Object.keys(localStorage)
   .forEach((key) => localStorage.removeItem(key));
 location.reload();
 ```
+
+以上脚本会删除全部场景状态以及 `basis-lab:theme`，因此主题也会恢复默认值。
 
 回滚部署完成后重复线上 smoke test，并在 Actions 中确认 environment 指向回退提交。
 
@@ -132,13 +135,14 @@ location.reload();
 
 ### 刷新后场景不一致
 
-应用使用 URL hash 选择场景，不依赖服务端路由回退。确认地址形如 `/#transform`，并检查浏览器是否禁用了 localStorage。清除站点数据可恢复全部场景默认值。
+应用使用 URL hash 选择场景，不依赖服务端路由回退。确认地址形如 `/#transform`，并检查浏览器是否禁用了 localStorage。清除站点数据可恢复全部场景与主题默认值。
 
-### Canvas 空白或 PNG 无法导出
+### Canvas/WebGL 空白或 PNG 无法导出
 
-- 记录浏览器名称与版本、完整 URL/hash、部署提交 SHA、控制台错误及失败输入。
+- 记录浏览器名称与版本、完整 URL/hash、部署提交 SHA、控制台错误/警告及失败输入。
 - 在无扩展的当前稳定版浏览器重试，并检查 Canvas 是否被隐私扩展或下载策略阻止。
 - 用相同输入运行本地 `npm run preview`；若可复现，附上 Playwright trace 和截图提交 issue。
+- 仅 3D 舞台失败时，检查浏览器是否启用硬件加速与 WebGL2；二维 Canvas 场景应继续可用，并在 3D 舞台显示明确错误状态。
 
 ## 其他静态托管
 

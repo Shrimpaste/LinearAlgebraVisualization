@@ -4,6 +4,7 @@ import type { SceneProps } from "../../app/types";
 import {
   IDENTITY_MAT2,
   applyMat2,
+  columnsOfMat2,
   interpolateMat2,
   scaleVec2,
   type EigenAnalysis,
@@ -24,6 +25,7 @@ import { MetricList } from "../../components/ui/MetricList";
 import { Notice } from "../../components/ui/Notice";
 import { PresetGrid } from "../../components/ui/PresetGrid";
 import { RangeField } from "../../components/ui/RangeField";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { Toggle } from "../../components/ui/Toggle";
 import { VectorInput } from "../../components/ui/VectorInput";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -41,8 +43,13 @@ import {
   getCanvasPalette,
   isWorldPointNearCanvas,
 } from "../../rendering";
-import { formatNumber, formatVector } from "../../utils/format";
-import { deriveEigen, eigenDefaults, eigenPresets } from "./model";
+import { formatMatrix, formatNumber, formatVector } from "../../utils/format";
+import {
+  deriveEigen,
+  eigenDefaults,
+  eigenPresets,
+  migrateEigenState,
+} from "./model";
 
 function analysisLabel(analysis: EigenAnalysis) {
   switch (analysis.kind) {
@@ -107,11 +114,13 @@ export function EigenScene({ theme }: SceneProps) {
   const [state, setState, resetState] = useLocalStorage(
     "basis-lab:eigen",
     eigenDefaults,
+    migrateEigenState,
   );
   const stageRef = useRef<VisualizationStageHandle>(null);
   const dragging = useRef(false);
   const derived = useMemo(() => deriveEigen(state), [state]);
   const { analysis } = derived;
+  const basisValid = derived.basisAnalysis.isBasis;
 
   const render = useCallback(
     (frame: VisualizationRenderFrame) => {
@@ -121,6 +130,28 @@ export function EigenScene({ theme }: SceneProps) {
       ctx.fillRect(0, 0, width, height);
       drawGrid(ctx, viewport, palette);
       drawAxes(ctx, viewport, palette);
+
+      if (state.basisMode === "custom") {
+        columnsOfMat2(state.basis).forEach((vector, index) => {
+          drawVector(ctx, viewport, vector, {
+            color: index === 0 ? palette.cyan : palette.yellow,
+            label: index === 0 ? "b₁" : "b₂",
+            width: 1.5,
+            dash: [4, 4],
+            alpha: 0.72,
+          });
+        });
+        if (!basisValid) {
+          drawLabel(
+            ctx,
+            viewport,
+            [-3.35, 2.55],
+            "B 退化 · 坐标证书已阻止",
+            palette.red,
+            [0, 0],
+          );
+        }
+      }
 
       const animated = interpolateMat2(
         IDENTITY_MAT2,
@@ -252,7 +283,7 @@ export function EigenScene({ theme }: SceneProps) {
         }
       }
     },
-    [analysis, derived.orbit, state, theme],
+    [analysis, basisValid, derived.orbit, state, theme],
   );
 
   const onPointerDown = useCallback(
@@ -283,6 +314,24 @@ export function EigenScene({ theme }: SceneProps) {
     window.setTimeout(() => stageRef.current?.replay(), 0);
   };
 
+  const coordinateMetrics = derived.eigenvectors.flatMap((entry, index) => [
+    {
+      label: `${entry.label} 标准坐标`,
+      value: formatVector(entry.vector),
+      key: `eigenvector-${index + 1}-standard`,
+      tone: "blue" as const,
+    },
+    {
+      label: `[${entry.label}]B 基坐标`,
+      value:
+        entry.basisCoordinates === null
+          ? "—"
+          : formatVector(entry.basisCoordinates),
+      key: `eigenvector-${index + 1}-basis`,
+      tone: "yellow" as const,
+    },
+  ]);
+
   const notice =
     analysis.kind === "complex" ? (
       <Notice tone="warning">判别式小于零，实数域内没有特征向量。</Notice>
@@ -297,16 +346,29 @@ export function EigenScene({ theme }: SceneProps) {
       id="eigen"
       index="03"
       title="特征系统"
-      subtitle="寻找变换中不偏转的方向"
+      subtitle="T: V → V · 同一空间中的特征方向与相似换基"
       formulaLabel="特征值"
       formula={eigenFormula(analysis)}
-      formulaStatus={analysisLabel(analysis)}
+      formulaStatus={
+        basisValid ? analysisLabel(analysis) : "B 无效 · 仅保留标准谱"
+      }
       formulaTone={
-        analysis.kind === "complex" || analysis.kind === "defective"
+        !basisValid ||
+        analysis.kind === "complex" ||
+        analysis.kind === "defective"
           ? "warning"
           : "positive"
       }
-      insight={eigenInsight(analysis)}
+      insight={
+        basisValid ? (
+          eigenInsight(analysis)
+        ) : (
+          <>
+            <strong>B 的列向量必须线性无关。</strong> 标准矩阵 A
+            的特征值仍成立，但不生成 [T]_B 或基坐标特征向量。
+          </>
+        )
+      }
       stage={
         <VisualizationStage
           key={isMobile ? "mobile" : "desktop"}
@@ -318,8 +380,13 @@ export function EigenScene({ theme }: SceneProps) {
             center: isMobile ? [0, 0.3] : [0, 0],
           }}
           duration={1150}
-          ariaLabel="矩阵作用下的方向场、特征方向与幂迭代轨迹"
-          fallbackDescription={`${analysisLabel(analysis)}，${eigenFormula(analysis)}。`}
+          ariaLabel="同一二维算子在标准坐标中的方向场、特征方向、候选基与幂迭代轨迹"
+          fallbackDescription={
+            `${analysisLabel(analysis)}，${eigenFormula(analysis)}。` +
+            (derived.coordinateMatrix !== null
+              ? `坐标矩阵为 ${formatMatrix(derived.coordinateMatrix)}。`
+              : "候选 B 不是基，坐标矩阵与基坐标向量未定义。")
+          }
           showExportButton
           exportFilename="basis-lab-eigen.png"
           onPointerDown={onPointerDown}
@@ -332,15 +399,15 @@ export function EigenScene({ theme }: SceneProps) {
         <>
           <ControlSection
             title="线性算子"
-            caption="特征多项式为 λ² − tr(A)λ + det(A)"
+            caption="A = [T]_E 是 T: V → V 的标准坐标矩阵"
             action={
-              <IconButton label="恢复默认算子" onClick={resetState}>
+              <IconButton label="恢复默认特征实验" onClick={resetState}>
                 <RotateCcw size={15} />
               </IconButton>
             }
           >
             <MatrixInput
-              label="特征矩阵"
+              label="标准坐标矩阵"
               value={state.matrix}
               onChange={(matrix) =>
                 setState((current) => ({ ...current, matrix }))
@@ -354,8 +421,46 @@ export function EigenScene({ theme }: SceneProps) {
           </ControlSection>
 
           <ControlSection
+            title="同空间坐标基"
+            caption="[T]_B = B⁻¹AB；输入与输出使用同一个 B"
+          >
+            <SegmentedControl
+              label="特征坐标基模式"
+              value={state.basisMode}
+              options={[
+                { value: "standard", label: "标准基" },
+                { value: "custom", label: "自定义基" },
+              ]}
+              onChange={(basisMode) =>
+                setState((current) => ({ ...current, basisMode }))
+              }
+            />
+            {state.basisMode === "custom" && (
+              <>
+                <MatrixInput
+                  label="特征坐标基"
+                  symbol="B"
+                  value={state.basis}
+                  onChange={(basis) =>
+                    setState((current) => ({ ...current, basis }))
+                  }
+                />
+                {basisValid ? (
+                  <Notice tone="info">
+                    B 只改变同一算子的坐标表示，特征值保持不变。
+                  </Notice>
+                ) : (
+                  <Notice tone="warning">
+                    B 的列向量线性相关，无法生成 [T]_B 与基坐标特征向量。
+                  </Notice>
+                )}
+              </>
+            )}
+          </ControlSection>
+
+          <ControlSection
             title="幂迭代"
-            caption="反复应用 A 并归一化，观察方向收敛"
+            caption="seed 使用标准坐标；反复应用 A 并归一化"
           >
             <VectorInput
               label="seed"
@@ -420,6 +525,43 @@ export function EigenScene({ theme }: SceneProps) {
               ]}
             />
             {notice}
+          </ControlSection>
+
+          <ControlSection
+            title="换基证书"
+            caption="相似矩阵与实特征向量的双坐标读数"
+          >
+            <MetricList
+              metrics={[
+                {
+                  label: "det B",
+                  value: formatNumber(derived.basisAnalysis.determinant),
+                  key: "eigen-basis-determinant",
+                  tone: basisValid ? "cyan" : "red",
+                },
+                {
+                  label: "rank B",
+                  value: String(derived.basisAnalysis.rank),
+                  key: "eigen-basis-rank",
+                },
+                {
+                  label: "[T]_B = B⁻¹AB",
+                  value:
+                    derived.coordinateMatrix === null
+                      ? "—"
+                      : formatMatrix(derived.coordinateMatrix),
+                  key: "eigen-coordinate-matrix",
+                  tone: basisValid ? "cyan" : "red",
+                },
+              ]}
+            />
+            {coordinateMetrics.length > 0 ? (
+              <MetricList metrics={coordinateMetrics} />
+            ) : (
+              <Notice tone="info">
+                当前实平面没有实特征向量，因此没有实坐标向量可列出。
+              </Notice>
+            )}
           </ControlSection>
         </>
       }

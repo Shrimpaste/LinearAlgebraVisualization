@@ -1,6 +1,7 @@
 interface Segment<T extends string> {
   value: T;
   label: string;
+  disabled?: boolean;
 }
 
 interface SegmentedControlProps<T extends string> {
@@ -23,6 +24,8 @@ export function SegmentedControl<T extends string>({
           type="button"
           role="radio"
           aria-checked={value === option.value}
+          aria-disabled={option.disabled || undefined}
+          disabled={option.disabled}
           key={option.value}
           onClick={() => onChange(option.value)}
         >

@@ -1,7 +1,13 @@
-import type { ComponentType } from "react";
+import type { ComponentType, LazyExoticComponent } from "react";
 
 export type SceneId =
-  "span" | "transform" | "eigen" | "inner-product" | "determinant";
+  | "span"
+  | "transform"
+  | "eigen"
+  | "inner-product"
+  | "determinant"
+  | "operator"
+  | "decomposition";
 
 export type ThemeMode = "light" | "dark";
 
@@ -15,5 +21,6 @@ export interface SceneMeta {
   label: string;
   shortLabel: string;
   subtitle: string;
-  component: ComponentType<SceneProps>;
+  component:
+    ComponentType<SceneProps> | LazyExoticComponent<ComponentType<SceneProps>>;
 }
