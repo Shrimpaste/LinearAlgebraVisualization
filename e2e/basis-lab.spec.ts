@@ -4,6 +4,7 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { stat } from "node:fs/promises";
 
 type RuntimeGuardFixture = {
   runtimeGuard: void;
@@ -66,6 +67,25 @@ async function setMatrix(
   await expect(cells).toHaveCount(4);
   for (let index = 0; index < entries.length; index += 1) {
     await cells.nth(index).fill(String(entries[index]));
+  }
+}
+
+async function setLabeledMatrix(
+  page: Page,
+  label: string,
+  entries: readonly [number, number, number, number],
+) {
+  const positions = [
+    "第一行第一列",
+    "第一行第二列",
+    "第二行第一列",
+    "第二行第二列",
+  ] as const;
+
+  for (let index = 0; index < positions.length; index += 1) {
+    await page
+      .getByLabel(`${label} ${positions[index]}`)
+      .fill(String(entries[index]));
   }
 }
 
@@ -312,6 +332,105 @@ test("inner-product metric and Gram-Schmidt mode remain synchronized", async ({
   await expect(
     page.getByText("当前度量有效，所有范数与投影均可计算。"),
   ).toBeVisible();
+});
+
+test("invalid custom basis blocks an unstable coordinate transform", async ({
+  page,
+}) => {
+  await openModule(page, "transform");
+
+  await page.getByRole("radio", { name: "自定义基" }).click();
+  await setLabeledMatrix(page, "基矩阵", [1, 2, 2, 4]);
+
+  await expect(page.getByTestId("formula-readout")).toContainText("A · v = —");
+  await expect(page.getByTestId("formula-readout")).toContainText("换基不可用");
+  await expect(result(page, "rank")).toHaveText("—");
+  await expect(result(page, "output")).toHaveText("—");
+  await expect(
+    page.getByText("基向量线性相关或数值上过度病态，无法稳定建立坐标映射。"),
+  ).toBeVisible();
+});
+
+test("repeated and defective eigen presets expose their distinct geometry", async ({
+  page,
+}) => {
+  await openModule(page, "eigen");
+
+  await page.getByRole("button", { name: "重根" }).click();
+  await expect(page.getByTestId("formula-readout")).toContainText(
+    "重根 · 全方向",
+  );
+  await expect(page.getByTestId("formula-readout")).toContainText(
+    "λ = 1.4（二重）",
+  );
+
+  await page.getByRole("button", { name: "缺陷矩阵" }).click();
+  await expect(page.getByTestId("formula-readout")).toContainText(
+    "重根 · 单一方向",
+  );
+  await expect(
+    page.getByText("仅有一个线性无关特征向量，矩阵不可对角化。"),
+  ).toBeVisible();
+});
+
+test("invalid metric disables inner-product results", async ({ page }) => {
+  await openModule(page, "inner-product");
+
+  await page.getByRole("combobox", { name: "内积度量" }).selectOption("custom");
+  await setLabeledMatrix(page, "度量矩阵", [1, 2, 2, 1]);
+
+  await expect(page.getByTestId("formula-readout")).toContainText("G 无效");
+  await expect(result(page, "inner-product")).toHaveText("未定义");
+  await expect(result(page, "norm-u")).toHaveText("—");
+  await expect(page.getByText("当前 G 不是对称正定矩阵。")).toBeVisible();
+});
+
+test("zero span and determinant collapse retain their boundary semantics", async ({
+  page,
+}) => {
+  await openModule(page, "span");
+  await page.getByRole("button", { name: "两个零向量" }).click();
+
+  await expect(result(page, "rank")).toHaveText("0");
+  await expect(result(page, "classification")).toHaveText("原点");
+  await expect(page.getByText("当前向量组不是 R² 的基。")).toBeVisible();
+
+  await openModule(page, "determinant");
+  await page.getByRole("button", { name: "坍缩" }).click();
+
+  await expect(result(page, "determinant")).toHaveText("0");
+  await expect(result(page, "rank")).toHaveText("1");
+  await expect(result(page, "orientation")).toHaveText("无定向");
+  await expect(
+    page.getByText("列向量线性相关，二维面积被压缩到零。"),
+  ).toBeVisible();
+});
+
+test("scene edits persist across reloads", async ({ page }) => {
+  await openModule(page, "transform");
+  await setMatrix(page, [2, 0, 0, 3]);
+  await expect(result(page, "output")).toHaveText("(3, 3)");
+
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+
+  await expect(page.getByLabel("变换矩阵 第一行第一列")).toHaveValue("2");
+  await expect(page.getByLabel("变换矩阵 第二行第二列")).toHaveValue("3");
+  await expect(result(page, "determinant")).toHaveText("6");
+  await expect(result(page, "output")).toHaveText("(3, 3)");
+});
+
+test("PNG export produces a named nonempty image", async ({ page }) => {
+  await openModule(page, "transform");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出 PNG" }).click();
+  const download = await downloadPromise;
+
+  expect(download.suggestedFilename()).toBe("basis-lab-transform.png");
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  expect((await stat(downloadPath!)).size).toBeGreaterThan(5_000);
 });
 
 test("timeline supports replay, pause, and exact scrubbing", async ({
