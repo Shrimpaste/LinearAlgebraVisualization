@@ -30,6 +30,29 @@ export interface RealBasisAnalysis {
   readonly orientation: "positive" | "negative" | "degenerate";
 }
 
+export interface RealIndependentSubsetDiagnostic {
+  readonly index: number;
+  readonly accepted: boolean;
+  readonly reason: "independent" | "dependent" | "zero";
+  /** Largest absolute input component. Inputs are divided by this before testing. */
+  readonly inputScale: number;
+  /** Euclidean residual after projection from the previously accepted directions. */
+  readonly normalizedResidual: number;
+}
+
+export interface RealIndependentSubsetAnalysis {
+  readonly dimension: Dimension;
+  readonly rank: number;
+  /** Input indices, retained in deterministic input order. */
+  readonly indices: readonly number[];
+  /** Original, unnormalized selected vectors in column order. */
+  readonly basisColumns: readonly RealVector[];
+  /** Row-major matrix whose columns are `basisColumns`. */
+  readonly basisMatrix: RealMatrix;
+  readonly diagnostics: readonly RealIndependentSubsetDiagnostic[];
+  readonly isSpanning: boolean;
+}
+
 function maxAbs(matrix: RealMatrix) {
   let scale = 0;
   matrix.forEach((row) =>
@@ -216,6 +239,100 @@ export function conditionNumberRealMatrix(
   return singularInfo(matrix, epsilon).condition;
 }
 
+/**
+ * Greedily selects the maximal independent subset of vectors in input order.
+ *
+ * Each nonzero input is normalized by its own largest component before the
+ * independence test. Consequently tiny but nonzero vectors retain their
+ * direction instead of being discarded because of their absolute magnitude.
+ */
+export function analyzeRealIndependentSubset(
+  vectors: readonly RealVector[],
+  epsilon = ND_EPSILON,
+): RealIndependentSubsetAnalysis {
+  if (!Array.isArray(vectors) || vectors.length === 0) {
+    throw new RangeError("vectors must contain at least one vector");
+  }
+  if (!Number.isFinite(epsilon) || epsilon < 0) {
+    throw new RangeError("epsilon must be a finite non-negative number");
+  }
+  const dimension = validateRealVector(vectors[0]!, "vector 1");
+  vectors.forEach((vector, index) => {
+    const candidateDimension = validateRealVector(
+      vector,
+      `vector ${index + 1}`,
+    );
+    if (candidateDimension !== dimension) {
+      throw new RangeError("all vectors must have the same dimension");
+    }
+  });
+
+  const indices: number[] = [];
+  const basisColumns: RealVector[] = [];
+  const orthonormalDirections: number[][] = [];
+  const diagnostics: RealIndependentSubsetDiagnostic[] = [];
+
+  vectors.forEach((vector, index) => {
+    const inputScale = Math.max(
+      ...vector.map((value: number) => Math.abs(value)),
+    );
+    if (inputScale === 0) {
+      diagnostics.push({
+        index,
+        accepted: false,
+        reason: "zero",
+        inputScale,
+        normalizedResidual: 0,
+      });
+      return;
+    }
+
+    const normalized = vector.map((value: number) => value / inputScale);
+    const residual = [...normalized];
+    // Two passes make modified Gram-Schmidt reliable near an existing span.
+    for (let pass = 0; pass < 2; pass += 1) {
+      orthonormalDirections.forEach((direction) => {
+        const projection = residual.reduce(
+          (sum, value, component) => sum + value * direction[component]!,
+          0,
+        );
+        residual.forEach((value, component) => {
+          residual[component] = value - projection * direction[component]!;
+        });
+      });
+    }
+    const residualNorm = Math.hypot(...residual);
+    const normalizedNorm = Math.hypot(...normalized);
+    const accepted =
+      indices.length < dimension && residualNorm > epsilon * normalizedNorm;
+    diagnostics.push({
+      index,
+      accepted,
+      reason: accepted ? "independent" : "dependent",
+      inputScale,
+      normalizedResidual: residualNorm,
+    });
+    if (!accepted) return;
+
+    indices.push(index);
+    basisColumns.push([...vector]);
+    orthonormalDirections.push(residual.map((value) => value / residualNorm));
+  });
+
+  const basisMatrix = Array.from({ length: dimension }, (_, row) =>
+    basisColumns.map((column) => column[row]!),
+  );
+  return {
+    dimension,
+    rank: indices.length,
+    indices,
+    basisColumns,
+    basisMatrix,
+    diagnostics,
+    isSpanning: indices.length === dimension,
+  };
+}
+
 export function analyzeRealBasis(
   basis: RealMatrix,
   epsilon = ND_EPSILON,
@@ -243,8 +360,41 @@ export function analyzeRealBasis(
   };
 }
 
+/** Converts a standard-coordinate map S into coordinates as C^-1 S B. */
+export function standardToCoordinateRealMap(
+  standardMap: RealMatrix,
+  domainBasis: RealMatrix,
+  codomainBasis: RealMatrix = domainBasis,
+  epsilon = ND_EPSILON,
+): RealMatrix | null {
+  const mapShape = validateRealMatrix(standardMap, "standard map");
+  const domainShape = validateRealMatrix(domainBasis, "domain basis");
+  const codomainShape = validateRealMatrix(codomainBasis, "codomain basis");
+  if (
+    domainShape.rows !== domainShape.columns ||
+    codomainShape.rows !== codomainShape.columns ||
+    domainShape.rows !== mapShape.columns ||
+    codomainShape.rows !== mapShape.rows
+  ) {
+    throw new RangeError(
+      "domain and codomain bases must match the map's input and output dimensions",
+    );
+  }
+  const inverseCodomain = inverseRealMatrix(codomainBasis, epsilon);
+  if (
+    inverseCodomain === null ||
+    !analyzeRealBasis(domainBasis, epsilon).isBasis
+  ) {
+    return null;
+  }
+  return multiplyRealMatrices(
+    multiplyRealMatrices(inverseCodomain, standardMap),
+    domainBasis,
+  );
+}
+
 /** Converts a coordinate map A into standard coordinates as C A B^-1. */
-export function effectiveRealMap(
+export function coordinateToStandardRealMap(
   coordinateMap: RealMatrix,
   domainBasis: RealMatrix,
   codomainBasis: RealMatrix = domainBasis,
@@ -273,5 +423,20 @@ export function effectiveRealMap(
   return multiplyRealMatrices(
     multiplyRealMatrices(codomainBasis, coordinateMap),
     inverseDomain,
+  );
+}
+
+/** @deprecated Prefer the explicitly named `coordinateToStandardRealMap`. */
+export function effectiveRealMap(
+  coordinateMap: RealMatrix,
+  domainBasis: RealMatrix,
+  codomainBasis: RealMatrix = domainBasis,
+  epsilon = ND_EPSILON,
+): RealMatrix | null {
+  return coordinateToStandardRealMap(
+    coordinateMap,
+    domainBasis,
+    codomainBasis,
+    epsilon,
   );
 }

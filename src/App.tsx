@@ -155,7 +155,7 @@ export function App() {
         </div>
         <div className="header-context">
           <span>R / C</span>
-          <span>1–3D MATRIX WORKBENCH · v1.2.0-beta.1 · 待进一步测试优化</span>
+          <span>1–3D MATRIX WORKBENCH · v1.2.0-beta.2 · 待进一步测试优化</span>
         </div>
         <div className="header-actions">
           <IconButton

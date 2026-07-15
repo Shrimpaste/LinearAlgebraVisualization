@@ -116,6 +116,16 @@ async function setMatrixCells(
   }
 }
 
+async function setSpanVectorCells(page: Page, entries: readonly number[]) {
+  const cells = page.getByRole("spinbutton", {
+    name: /^v[₁₂₃₄₅₆] [xyz] 分量$/,
+  });
+  await expect(cells).toHaveCount(entries.length);
+  for (let index = 0; index < entries.length; index += 1) {
+    await cells.nth(index).fill(String(entries[index]));
+  }
+}
+
 async function setComplexLabeledMatrix(
   page: Page,
   label: string,
@@ -394,37 +404,48 @@ test("3x2 transform renders WebGL pixels and keeps the full timeline contract", 
   await expectNoHorizontalOverflow(page);
 });
 
-test("transform inverse gating and independent domain/codomain bases stay exact", async ({
+test("transform basis toggles preserve the map and ordered v/w bases stay exact", async ({
   page,
 }) => {
   await openModule(page, "transform");
-  await setMatrix(page, [2, 0, 0, 4]);
-  await page.getByLabel("v x 分量", { exact: true }).fill("4");
-  await page.getByLabel("v y 分量", { exact: true }).fill("8");
-
-  const inverse = page.getByRole("radio", { name: "逆向 T⁻¹" });
-  await expect(inverse).toBeEnabled();
-  await inverse.click();
-  await expect(result(page, "output")).toHaveText("(2, 2)");
-
-  await setMatrix(page, [1, 2, 2, 4]);
-  await expect(inverse).toBeDisabled();
-  await expect(page.getByRole("radio", { name: "正向 T" })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await expect(result(page, "output")).toHaveText("(20, 40)");
-
   await setMatrix(page, [1, 0, 0, 1]);
   await page.getByRole("radio", { name: "自定义基" }).click();
-  await setMatrixCells(page, "domain-basis-cell", [2, 0, 0, 1]);
-  await setMatrixCells(page, "codomain-basis-cell", [1, 0, 0, 3]);
+
+  await page.getByLabel("v1 x 分量", { exact: true }).fill("2");
+  await page.getByLabel("v1 y 分量", { exact: true }).fill("0");
+  await page.getByLabel("v2 x 分量", { exact: true }).fill("0");
+  await page.getByLabel("v2 y 分量", { exact: true }).fill("1");
+  await page.getByLabel("w1 x 分量", { exact: true }).fill("1");
+  await page.getByLabel("w1 y 分量", { exact: true }).fill("0");
+  await page.getByLabel("w2 x 分量", { exact: true }).fill("0");
+  await page.getByLabel("w2 y 分量", { exact: true }).fill("3");
   await page.getByLabel("v x 分量", { exact: true }).fill("1.5");
   await page.getByLabel("v y 分量", { exact: true }).fill("1");
   await expect(result(page, "output")).toHaveText("(0.75, 3)");
-  await expect(page.getByTestId("formula-readout")).toContainText(
-    "T · v = (0.75, 3)",
+
+  const canvas = page.getByTestId("visualization-stage-canvas");
+  await expect(canvas).toHaveAttribute(
+    "data-transform-basis-path",
+    "v_i->T(v_i)",
   );
+  await page.getByRole("radio", { name: "标准基" }).click();
+  await expect(result(page, "output")).toHaveText("(0.75, 3)");
+  await expect(page.getByLabel("v1 x 分量", { exact: true })).toHaveCount(0);
+  await expect(canvas).toHaveAttribute("data-transform-basis-path", "standard");
+  await page.getByRole("radio", { name: "自定义基" }).click();
+  await expect(result(page, "output")).toHaveText("(0.75, 3)");
+
+  const shared = page.getByLabel("W = V，共享同一有序基");
+  const sharedLabel = page.getByText("W = V，共享同一有序基", { exact: true });
+  await sharedLabel.click();
+  await expect(shared).toBeChecked();
+  await expect(result(page, "output")).toHaveText("(0.75, 3)");
+  await expect(page.getByLabel("w1 x 分量", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("陪域有序基", { exact: true })).toHaveCount(0);
+  await sharedLabel.click();
+  await expect(shared).not.toBeChecked();
+  await expect(result(page, "output")).toHaveText("(0.75, 3)");
+  await expect(page.getByLabel("w1 x 分量", { exact: true })).toBeVisible();
 });
 
 test("editable transform composition applies the first map before the second", async ({
@@ -439,17 +460,18 @@ test("editable transform composition applies the first map before the second", a
 
   await expect(result(page, "output")).toHaveText("(4, 2)");
   await expect(page.getByText("标准坐标复合 T₂ ∘ T₁")).toBeVisible();
+  await page.getByRole("radio", { name: "自定义基" }).click();
+  const canvas = page.getByTestId("visualization-stage-canvas");
+  await expect(canvas).toHaveAttribute(
+    "data-transform-basis-path",
+    "v_i->T1(v_i)->T2T1(v_i)",
+  );
+  await page.getByTestId("visualization-stage-playback").click();
   const scrubber = page.getByTestId("visualization-stage-scrubber");
   await scrubber.fill("0.5");
-  await expect(page.getByTestId("visualization-stage-canvas")).toHaveAttribute(
-    "data-progress",
-    "0.5000",
-  );
-  await expect(page.getByTestId("visualization-stage-canvas")).toHaveAttribute(
-    "data-transform-output",
-    "2,2",
-  );
-  await expectNonblankCanvas(page.getByTestId("visualization-stage-canvas"));
+  await expect(canvas).toHaveAttribute("data-progress", "0.5000");
+  await expect(canvas).toHaveAttribute("data-transform-output", "2,2");
+  await expectNonblankCanvas(canvas);
 
   await page.getByLabel("v x 分量", { exact: true }).fill("4");
   await page.getByRole("radio", { name: "逆向 T⁻¹" }).click();
@@ -492,76 +514,116 @@ test("determinant presets and column operations preserve signed-area rules", asy
   await expect(result(page, "area")).toHaveText("2");
 });
 
-test("eigen complex preset reports the lack of real eigenvectors", async ({
+test("eigen accepts R1/R2/R3 matrices and exposes only one shared Q", async ({
   page,
 }) => {
   await openModule(page, "eigen");
 
-  await page.getByRole("button", { name: "纯旋转" }).click();
-
-  await expect(result(page, "trace")).toHaveText("0");
-  await expect(result(page, "determinant")).toHaveText("1");
-  await expect(result(page, "discriminant")).toHaveText("-4");
-  await expect(page.getByTestId("formula-readout")).toContainText("共轭复根");
-  await expect(
-    page.getByText("判别式小于零，实数域内没有特征向量。"),
-  ).toBeVisible();
-});
-
-test("eigen basis changes use a similarity transform and reject a degenerate B", async ({
-  page,
-}) => {
-  await openModule(page, "eigen");
-  await page.getByRole("radio", { name: "自定义基" }).click();
-  await setLabeledMatrix(page, "特征坐标基", [1, 1, 0, 1]);
-
-  await expect(result(page, "eigen-basis-determinant")).toHaveText("1");
-  await expect(result(page, "eigen-basis-rank")).toHaveText("2");
-  await expect(result(page, "eigen-coordinate-matrix")).toHaveText(
-    "[[1, 0], [1, 3]]",
+  const dimension = page.getByRole("radio", { name: /1D|2D|3D/ });
+  await expect(dimension).toHaveCount(3);
+  await expect(page.getByText("共享自定义基 Q", { exact: true })).toHaveCount(
+    1,
   );
-  await expect(result(page, "eigenvector-1-standard")).toBeVisible();
-  await expect(result(page, "eigenvector-1-basis")).not.toHaveText("—");
-  await expectNonblankCanvas(page.getByTestId("visualization-stage-canvas"));
+  await expect(page.getByText(/幂迭代|谱证书|特征多项式/)).toHaveCount(0);
 
-  await setLabeledMatrix(page, "特征坐标基", [1, 2, 2, 4]);
-  await expect(result(page, "eigen-basis-rank")).toHaveText("1");
-  await expect(result(page, "eigen-coordinate-matrix")).toHaveText("—");
-  await expect(
-    page.getByText("B 的列向量线性相关，无法生成 [T]_B 与基坐标特征向量。"),
-  ).toBeVisible();
+  await page.getByRole("radio", { name: "1D" }).click();
+  await setMatrixCells(page, "eigen-matrix-cell", [4]);
+  await expect(page.getByTestId("formula-readout")).toContainText("λ1 = 4");
+  await expect(result(page, "eigenbasis-coordinate-matrix")).toHaveText("[4]");
+
+  await page.getByRole("radio", { name: "2D" }).click();
+  await setMatrixCells(page, "eigen-matrix-cell", [2, 0, 0, 3]);
+  await expect(page.getByTestId("eigenvector-component")).toHaveCount(4);
+  await expect(result(page, "eigenbasis-p")).toBeVisible();
+  await expect(result(page, "eigenbasis-coordinate-matrix")).toHaveText(
+    "[3, 0] [0, 2]",
+  );
+
+  await page.getByRole("radio", { name: "3D" }).click();
+  await setMatrixCells(page, "eigen-matrix-cell", [3, 0, 0, 0, 2, 0, 0, 0, 1]);
+  await expect(page.getByLabel("q3 z 分量", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("eigenvector-component")).toHaveCount(9);
+  await expect(result(page, "eigenbasis-coordinate-matrix")).toHaveText(
+    "[3, 0, 0] [0, 2, 0] [0, 0, 1]",
+  );
+  const threeCanvas = page.getByTestId("visualization-stage-canvas");
+  await expect(threeCanvas).toHaveAttribute("data-eigen-geometry", "real");
+  await expect(threeCanvas).toHaveAttribute("data-render-state", "static");
+  await expect(page.getByRole("button", { name: "重置相机" })).toBeVisible();
 });
 
-test("dependent span preset is classified as a line instead of a basis", async ({
+test("eigen reports complex, defective, and invalid-Q unavailable cases", async ({
+  page,
+}) => {
+  await openModule(page, "eigen");
+
+  await setMatrixCells(page, "eigen-matrix-cell", [0, -1, 1, 0]);
+  await expect(page.getByTestId("formula-readout")).toContainText("i");
+  await expect(
+    page.getByText(/\[T\]P = P⁻¹AP：不可用。含非实特征值/),
+  ).toBeVisible();
+  await expect(result(page, "eigenbasis-coordinate-matrix")).toHaveCount(0);
+
+  await setMatrixCells(page, "eigen-matrix-cell", [1, 1, 0, 1]);
+  await expect(
+    page.getByText(/\[T\]P = P⁻¹AP：不可用。特征向量不足/),
+  ).toBeVisible();
+
+  await setMatrixCells(page, "eigen-matrix-cell", [2, 0, 0, 3]);
+  await page.getByRole("radio", { name: "自定义 Q" }).click();
+  await page.getByLabel("q1 x 分量", { exact: true }).fill("1");
+  await page.getByLabel("q1 y 分量", { exact: true }).fill("2");
+  await page.getByLabel("q2 x 分量", { exact: true }).fill("2");
+  await page.getByLabel("q2 y 分量", { exact: true }).fill("4");
+  await expect(
+    page.getByText("Q 退化；无法切换坐标或恢复物理算子。"),
+  ).toBeVisible();
+  await expect(page.getByTestId("formula-readout")).toContainText("Q 无效");
+  await expect(page.getByText(/\[T\]P = P⁻¹AP：不可用。Q 无效/)).toBeVisible();
+});
+
+test("span direct input covers R1/R2/R3, all vectors, and stable basis order", async ({
   page,
 }) => {
   await openModule(page, "span");
 
-  await page.getByRole("button", { name: "同一直线" }).click();
+  await expect(
+    page.getByRole("button", { name: /同一直线|冗余生成组|两个零向量/ }),
+  ).toHaveCount(0);
+  const space = page.getByRole("combobox", { name: "空间" });
+  const count = page.getByRole("combobox", { name: "向量数量" });
 
+  await space.selectOption("1");
+  await count.selectOption("1");
+  await page.getByLabel("v₁ x 分量", { exact: true }).fill("0");
+  await expect(result(page, "rank")).toHaveText("0");
+  await expect(result(page, "classification")).toHaveText("原点");
+  await page.getByLabel("v₁ x 分量", { exact: true }).fill("2");
   await expect(result(page, "rank")).toHaveText("1");
-  await expect(result(page, "determinant")).toHaveText("0");
-  await expect(result(page, "classification")).toHaveText("一条直线");
-  await expect(page.getByText("当前向量组不是 R² 的基。")).toBeVisible();
-});
+  await expect(result(page, "classification")).toHaveText("整个空间 R1");
 
-test("span vector groups expose every vector and select a stable basis", async ({
-  page,
-}) => {
-  await openModule(page, "span");
-  await page.getByRole("button", { name: "冗余生成组" }).click();
-
-  await expect(page.getByRole("combobox", { name: "向量数量" })).toHaveValue(
-    "4",
-  );
-  await expect(result(page, "rank")).toHaveText("2");
-  await expect(result(page, "basis-indices")).toHaveText("v₂, v₄");
-  await expect(result(page, "classification")).toHaveText("整个平面 R²");
-  await expect(page.getByLabel("v₄ x 分量", { exact: true })).toBeVisible();
-  await expectNonblankCanvas(page.getByTestId("visualization-stage-canvas"));
-
-  await page.getByRole("combobox", { name: "向量数量" }).selectOption("6");
+  await space.selectOption("2");
+  await count.selectOption("6");
+  const vectors2 = [1, 0, 2, 0, 0, 1, 1, 1, 0, 0, -1, 0];
+  await setSpanVectorCells(page, vectors2);
   await expect(page.getByLabel("v₆ y 分量", { exact: true })).toBeVisible();
+  await expect(result(page, "rank")).toHaveText("2");
+  await expect(result(page, "basis-indices")).toHaveText("v₁, v₃");
+  await expect(result(page, "classification")).toHaveText("整个空间 R2");
+  await page.getByRole("slider", { name: "c₆ · v₆" }).fill("1");
+  await expect(page.getByTestId("formula-readout")).toContainText("(0.1, 0)");
+
+  await space.selectOption("3");
+  await count.selectOption("4");
+  await setSpanVectorCells(page, [1, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1]);
+  await expect(page.getByLabel("v₄ z 分量", { exact: true })).toBeVisible();
+  await expect(result(page, "rank")).toHaveText("3");
+  await expect(result(page, "basis-indices")).toHaveText("v₁, v₃, v₄");
+  await expect(result(page, "classification")).toHaveText("整个空间 R3");
+  await expect(page.getByRole("slider", { name: "c₄ · v₄" })).toBeVisible();
+  await expectNonblankWebGLCanvas(
+    page.getByTestId("visualization-stage-canvas"),
+  );
 });
 
 test("inner-product metric and Gram-Schmidt mode remain synchronized", async ({
@@ -643,7 +705,10 @@ test("invalid custom basis blocks an unstable coordinate transform", async ({
   await openModule(page, "transform");
 
   await page.getByRole("radio", { name: "自定义基" }).click();
-  await setLabeledMatrix(page, "基矩阵", [1, 2, 2, 4]);
+  await page.getByLabel("v1 x 分量", { exact: true }).fill("1");
+  await page.getByLabel("v1 y 分量", { exact: true }).fill("2");
+  await page.getByLabel("v2 x 分量", { exact: true }).fill("2");
+  await page.getByLabel("v2 y 分量", { exact: true }).fill("4");
 
   await expect(page.getByTestId("formula-readout")).toContainText("T · v = —");
   await expect(page.getByTestId("formula-readout")).toContainText("换基不可用");
@@ -651,28 +716,6 @@ test("invalid custom basis blocks an unstable coordinate transform", async ({
   await expect(result(page, "output")).toHaveText("—");
   await expect(
     page.getByText("基向量线性相关或数值上过度病态，无法稳定建立坐标映射。"),
-  ).toBeVisible();
-});
-
-test("repeated and defective eigen presets expose their distinct geometry", async ({
-  page,
-}) => {
-  await openModule(page, "eigen");
-
-  await page.getByRole("button", { name: "重根" }).click();
-  await expect(page.getByTestId("formula-readout")).toContainText(
-    "重根 · 全方向",
-  );
-  await expect(page.getByTestId("formula-readout")).toContainText(
-    "λ = 1.4（二重）",
-  );
-
-  await page.getByRole("button", { name: "缺陷矩阵" }).click();
-  await expect(page.getByTestId("formula-readout")).toContainText(
-    "重根 · 单一方向",
-  );
-  await expect(
-    page.getByText("仅有一个线性无关特征向量，矩阵不可对角化。"),
   ).toBeVisible();
 });
 
@@ -788,16 +831,9 @@ test("SVD and right-polar stages cover wide, tall, and rank-deficient maps", asy
   await expectNonblankCanvas(page.getByTestId("visualization-stage-canvas"));
 });
 
-test("zero span and determinant collapse retain their boundary semantics", async ({
+test("determinant collapse retains its boundary semantics", async ({
   page,
 }) => {
-  await openModule(page, "span");
-  await page.getByRole("button", { name: "两个零向量" }).click();
-
-  await expect(result(page, "rank")).toHaveText("0");
-  await expect(result(page, "classification")).toHaveText("原点");
-  await expect(page.getByText("当前向量组不是 R² 的基。")).toBeVisible();
-
   await openModule(page, "determinant");
   await page.getByRole("button", { name: "坍缩" }).click();
 
@@ -807,6 +843,94 @@ test("zero span and determinant collapse retain their boundary semantics", async
   await expect(
     page.getByText("列向量线性相关，二维面积被压缩到零。"),
   ).toBeVisible();
+});
+
+test("legacy scene states migrate to the span v2, transform v4, and eigen v2 schemas", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "basis-lab:span",
+      JSON.stringify({
+        first: [2, 0],
+        second: [0, 3],
+        alpha: 1,
+        beta: 2,
+        target: [2, 6],
+        showLattice: false,
+        showTarget: true,
+      }),
+    );
+    localStorage.setItem(
+      "basis-lab:transform",
+      JSON.stringify({
+        version: 3,
+        rows: 2,
+        columns: 2,
+        matrix: [
+          [2, 0],
+          [0, 3],
+        ],
+        mode: "single",
+        secondMatrix: [
+          [1, 0],
+          [0, 1],
+        ],
+        vector: [1, 1],
+        basisMode: "standard",
+        domainBasis: [
+          [1, 0],
+          [0, 1],
+        ],
+        codomainBasis: [
+          [1, 0],
+          [0, 1],
+        ],
+        direction: "forward",
+        showGrid: true,
+        showSphere: true,
+        showTrail: false,
+      }),
+    );
+    localStorage.setItem(
+      "basis-lab:eigen",
+      JSON.stringify({
+        version: 1,
+        matrix: [2, 0, 0, 3],
+        basisMode: "standard",
+        basis: [1, 0, 0, 1],
+        seed: [9, 9],
+        iterations: 99,
+        showField: true,
+      }),
+    );
+  });
+
+  await openModule(page, "span");
+  await expect(result(page, "rank")).toHaveText("2");
+  await expect(result(page, "classification")).toHaveText("整个空间 R2");
+  await openModule(page, "transform");
+  await expect(result(page, "output")).toHaveText("(2, 3)");
+  await openModule(page, "eigen");
+  await expect(result(page, "eigenbasis-coordinate-matrix")).toHaveText(
+    "[3, 0] [0, 2]",
+  );
+
+  const versions = await page.evaluate(() => ({
+    span: JSON.parse(localStorage.getItem("basis-lab:span") ?? "null")?.version,
+    transform: JSON.parse(localStorage.getItem("basis-lab:transform") ?? "null")
+      ?.version,
+    eigen: JSON.parse(localStorage.getItem("basis-lab:eigen") ?? "null")
+      ?.version,
+    eigenSeed: JSON.parse(localStorage.getItem("basis-lab:eigen") ?? "null")
+      ?.seed,
+  }));
+  expect(versions).toEqual({
+    span: 2,
+    transform: 4,
+    eigen: 2,
+    eigenSeed: undefined,
+  });
 });
 
 test("scene edits persist across reloads", async ({ page }) => {

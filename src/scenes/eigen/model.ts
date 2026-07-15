@@ -1,50 +1,34 @@
 import {
-  IDENTITY_MAT2,
-  analyzeBasis,
-  analyzeEigenvalues,
-  applyMat2,
-  columnsOfMat2,
-  coordinatesFromStandard,
-  lengthVec2,
-  matrixInBases,
-  normalizeVec2,
-  type EigenAnalysis,
-  type Mat2,
-  type Vec2,
-} from "../../math";
+  analyzeRealBasis,
+  identityRealMatrix,
+  inverseRealMatrix,
+  multiplyRealMatrices,
+  solveRealEigensystem,
+  type Dimension,
+  type RealMatrix,
+  type RealVector,
+} from "../../math/nd";
 
 export type EigenBasisMode = "standard" | "custom";
 
 export interface EigenState {
-  readonly version: 1;
-  matrix: Mat2;
-  basisMode: EigenBasisMode;
-  basis: Mat2;
-  seed: Vec2;
-  iterations: number;
-  showField: boolean;
-  showOrbit: boolean;
+  readonly version: 2;
+  readonly dimension: Dimension;
+  readonly matrix: RealMatrix;
+  readonly basisMode: EigenBasisMode;
+  readonly basis: RealMatrix;
 }
 
 export const eigenDefaults: EigenState = {
-  version: 1,
-  matrix: [2, 1, 1, 2],
+  version: 2,
+  dimension: 2,
+  matrix: [
+    [2, 1],
+    [1, 2],
+  ],
   basisMode: "standard",
-  basis: IDENTITY_MAT2,
-  seed: [1.4, 0.35],
-  iterations: 5,
-  showField: true,
-  showOrbit: true,
+  basis: identityRealMatrix(2),
 };
-
-export const eigenPresets: readonly { label: string; value: Mat2 }[] = [
-  { label: "双实根", value: [2, 1, 1, 2] },
-  { label: "鞍点", value: [1.3, 0.5, 0.4, -0.9] },
-  { label: "重根", value: [1.4, 0, 0, 1.4] },
-  { label: "缺陷矩阵", value: [1, 1, 0, 1] },
-  { label: "纯旋转", value: [0, -1, 1, 0] },
-  { label: "旋转伸缩", value: [0.9, -0.7, 0.7, 0.9] },
-];
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object"
@@ -52,129 +36,214 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function finiteNumber(value: unknown, fallback: number) {
+function finite(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function coerceMat2(value: unknown, fallback: Mat2): Mat2 {
+function dimension(value: unknown): Dimension {
+  return value === 1 || value === 2 || value === 3 ? value : 2;
+}
+
+function coerceMatrix(
+  value: unknown,
+  size: Dimension,
+  fallback: RealMatrix,
+): RealMatrix {
+  const rows = Array.isArray(value) ? value : [];
+  return Array.from({ length: size }, (_, row) => {
+    const source = Array.isArray(rows[row]) ? rows[row] : [];
+    return Array.from({ length: size }, (_, column) =>
+      finite(
+        source[column],
+        fallback[row]?.[column] ?? (row === column ? 1 : 0),
+      ),
+    );
+  });
+}
+
+function legacyMat2(value: unknown, fallback: RealMatrix): RealMatrix {
   if (!Array.isArray(value)) return fallback;
   return [
-    finiteNumber(value[0], fallback[0]),
-    finiteNumber(value[1], fallback[1]),
-    finiteNumber(value[2], fallback[2]),
-    finiteNumber(value[3], fallback[3]),
+    [finite(value[0], fallback[0]![0]!), finite(value[1], fallback[0]![1]!)],
+    [finite(value[2], fallback[1]![0]!), finite(value[3], fallback[1]![1]!)],
   ];
 }
 
-function coerceVec2(value: unknown, fallback: Vec2): Vec2 {
-  if (!Array.isArray(value)) return fallback;
-  return [
-    finiteNumber(value[0], fallback[0]),
-    finiteNumber(value[1], fallback[1]),
-  ];
-}
-
+/** Migrates v1 while deliberately dropping seed/iteration/field/orbit state. */
 export function migrateEigenState(stored: unknown): EigenState {
   const record = asRecord(stored);
   if (!record) return eigenDefaults;
-  if (record.version !== undefined && record.version !== 1) {
+  if (
+    record.version !== undefined &&
+    record.version !== 1 &&
+    record.version !== 2
+  ) {
     return eigenDefaults;
   }
-
-  const iterations = finiteNumber(record.iterations, eigenDefaults.iterations);
+  if (record.version !== 2) {
+    return {
+      version: 2,
+      dimension: 2,
+      matrix: legacyMat2(record.matrix, eigenDefaults.matrix),
+      basisMode: record.basisMode === "custom" ? "custom" : "standard",
+      basis: legacyMat2(record.basis, identityRealMatrix(2)),
+    };
+  }
+  const size = dimension(record.dimension);
   return {
-    version: 1,
-    matrix: coerceMat2(record.matrix, eigenDefaults.matrix),
+    version: 2,
+    dimension: size,
+    matrix: coerceMatrix(record.matrix, size, identityRealMatrix(size)),
     basisMode: record.basisMode === "custom" ? "custom" : "standard",
-    basis: coerceMat2(record.basis, eigenDefaults.basis),
-    seed: coerceVec2(record.seed, eigenDefaults.seed),
-    iterations: Math.min(9, Math.max(1, Math.round(iterations))),
-    showField:
-      typeof record.showField === "boolean"
-        ? record.showField
-        : eigenDefaults.showField,
-    showOrbit:
-      typeof record.showOrbit === "boolean"
-        ? record.showOrbit
-        : eigenDefaults.showOrbit,
+    basis: coerceMatrix(record.basis, size, identityRealMatrix(size)),
   };
 }
 
-interface StandardEigenvector {
-  readonly label: string;
-  readonly eigenvalue: number;
-  readonly vector: Vec2;
+export function resizeEigenState(
+  state: EigenState,
+  size: Dimension,
+): EigenState {
+  const resizeWithIdentity = (matrix: RealMatrix) =>
+    Array.from({ length: size }, (_, row) =>
+      Array.from(
+        { length: size },
+        (_, column) => matrix[row]?.[column] ?? (row === column ? 1 : 0),
+      ),
+    );
+  return {
+    ...state,
+    dimension: size,
+    matrix: resizeWithIdentity(state.matrix),
+    basis: resizeWithIdentity(state.basis),
+  };
 }
 
-export interface EigenvectorCoordinateReadout extends StandardEigenvector {
-  readonly basisCoordinates: Vec2 | null;
+/** Converts the editable matrix when changing coordinates, preserving T. */
+export function changeEigenBasisMode(
+  state: EigenState,
+  mode: EigenBasisMode,
+): EigenState | null {
+  if (mode === state.basisMode) return state;
+  const inverse = inverseRealMatrix(state.basis);
+  if (!inverse) return null;
+  const matrix =
+    mode === "custom"
+      ? multiplyRealMatrices(
+          multiplyRealMatrices(inverse, state.matrix),
+          state.basis,
+        )
+      : multiplyRealMatrices(
+          multiplyRealMatrices(state.basis, state.matrix),
+          inverse,
+        );
+  return { ...state, basisMode: mode, matrix };
 }
 
-function standardEigenvectors(
-  analysis: EigenAnalysis,
-): readonly StandardEigenvector[] {
-  switch (analysis.kind) {
-    case "two-real":
-      return analysis.eigenpairs.map((pair, index) => ({
-        label: index === 0 ? "q₁" : "q₂",
-        eigenvalue: pair.value,
-        vector: pair.vector,
-      }));
-    case "repeated":
-      return [
-        { label: "q₁", eigenvalue: analysis.eigenvalue, vector: [1, 0] },
-        { label: "q₂", eigenvalue: analysis.eigenvalue, vector: [0, 1] },
-      ];
-    case "defective":
-      return [
-        {
-          label: "q",
-          eigenvalue: analysis.eigenvalue,
-          vector: analysis.eigenvector,
-        },
-      ];
-    case "complex":
-      return [];
-  }
+export function setBasisVector(
+  basis: RealMatrix,
+  index: number,
+  vector: RealVector,
+): RealMatrix {
+  return basis.map((row, rowIndex) =>
+    row.map((value, column) =>
+      column === index ? (vector[rowIndex] ?? 0) : value,
+    ),
+  );
+}
+
+export function basisVector(basis: RealMatrix, index: number): RealVector {
+  return basis.map((row) => row[index] ?? 0);
+}
+
+export function eigenPresets(
+  size: Dimension,
+): readonly { label: string; value: RealMatrix }[] {
+  if (size === 1)
+    return [
+      { label: "伸缩", value: [[2]] },
+      { label: "翻转", value: [[-1]] },
+    ] as const;
+  if (size === 2)
+    return [
+      {
+        label: "双实根",
+        value: [
+          [2, 1],
+          [1, 2],
+        ],
+      },
+      {
+        label: "重根",
+        value: [
+          [1.4, 0],
+          [0, 1.4],
+        ],
+      },
+      {
+        label: "缺陷矩阵",
+        value: [
+          [1, 1],
+          [0, 1],
+        ],
+      },
+      {
+        label: "纯旋转",
+        value: [
+          [0, -1],
+          [1, 0],
+        ],
+      },
+    ] as const;
+  return [
+    {
+      label: "三实轴",
+      value: [
+        [3, 0, 0],
+        [0, 2, 0],
+        [0, 0, 1],
+      ],
+    },
+    {
+      label: "耦合实根",
+      value: [
+        [3, 1, 0],
+        [0, 2, 1],
+        [0, 0, 1],
+      ],
+    },
+    {
+      label: "缺陷矩阵",
+      value: [
+        [2, 1, 0],
+        [0, 2, 0],
+        [0, 0, -1],
+      ],
+    },
+    {
+      label: "旋转 + 实轴",
+      value: [
+        [0, -1, 0],
+        [1, 0, 0],
+        [0, 0, 2],
+      ],
+    },
+  ] as const;
 }
 
 export function deriveEigen(state: EigenState) {
-  const analysis = analyzeEigenvalues(state.matrix);
-  const activeBasisMatrix =
-    state.basisMode === "custom" ? state.basis : IDENTITY_MAT2;
-  const activeBasis = columnsOfMat2(activeBasisMatrix);
-  const basisAnalysis = analyzeBasis(activeBasis);
-  const coordinateMatrix = basisAnalysis.isBasis
-    ? matrixInBases(state.matrix, activeBasis)
+  const basisAnalysis = analyzeRealBasis(state.basis);
+  const inverse = inverseRealMatrix(state.basis);
+  const physicalMatrix =
+    state.basisMode === "standard"
+      ? state.matrix
+      : inverse
+        ? multiplyRealMatrices(
+            multiplyRealMatrices(state.basis, state.matrix),
+            inverse,
+          )
+        : null;
+  const eigensystem = physicalMatrix
+    ? solveRealEigensystem(physicalMatrix)
     : null;
-  const coordinateAnalysis =
-    coordinateMatrix === null ? null : analyzeEigenvalues(coordinateMatrix);
-  const eigenvectors: readonly EigenvectorCoordinateReadout[] =
-    standardEigenvectors(analysis).map((entry) => ({
-      ...entry,
-      basisCoordinates: basisAnalysis.isBasis
-        ? coordinatesFromStandard(entry.vector, activeBasis)
-        : null,
-    }));
-  const orbit: Vec2[] = [state.seed];
-  let current = state.seed;
-  for (let index = 0; index < state.iterations; index += 1) {
-    const transformed = applyMat2(state.matrix, current);
-    const normalized = normalizeVec2(transformed);
-    if (normalized === null) {
-      orbit.push([0, 0]);
-      break;
-    }
-    const length = Math.min(2.8, Math.max(1.2, lengthVec2(current)));
-    current = [normalized[0] * length, normalized[1] * length];
-    orbit.push(current);
-  }
-  return {
-    analysis,
-    basisAnalysis,
-    coordinateAnalysis,
-    coordinateMatrix,
-    eigenvectors,
-    orbit,
-  } as const;
+  return { basisAnalysis, physicalMatrix, eigensystem } as const;
 }
