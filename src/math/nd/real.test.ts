@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeRealBasis,
+  analyzeRealIndependentSubset,
   applyRealMatrix,
   conditionNumberRealMatrix,
+  coordinateToStandardRealMap,
   determinantRealMatrix,
   effectiveRealMap,
   identityRealMatrix,
@@ -12,6 +14,7 @@ import {
   rankRealMatrix,
   resizeRealMatrix,
   resizeRealVector,
+  standardToCoordinateRealMap,
   transposeRealMatrix,
   validateRealMatrix,
   validateRealVector,
@@ -150,6 +153,75 @@ describe("N-dimensional real operations", () => {
     );
   });
 
+  it("selects a deterministic dimension-generic maximal independent subset", () => {
+    const analysis = analyzeRealIndependentSubset([
+      [0, 0, 0],
+      [2, 0, 0],
+      [-4, 0, 0],
+      [1, 1, 0],
+      [5, 5, 0],
+      [0, 0, 3],
+      [1, 2, 3],
+    ]);
+
+    expect(analysis).toMatchObject({
+      dimension: 3,
+      rank: 3,
+      indices: [1, 3, 5],
+      basisColumns: [
+        [2, 0, 0],
+        [1, 1, 0],
+        [0, 0, 3],
+      ],
+      basisMatrix: [
+        [2, 1, 0],
+        [0, 1, 0],
+        [0, 0, 3],
+      ],
+      isSpanning: true,
+    });
+    expect(analysis.diagnostics.map(({ reason }) => reason)).toEqual([
+      "zero",
+      "independent",
+      "dependent",
+      "independent",
+      "dependent",
+      "independent",
+      "dependent",
+    ]);
+  });
+
+  it("preserves tiny nonzero directions through per-input normalization", () => {
+    const analysis = analyzeRealIndependentSubset([
+      [1e-300, 1e-300],
+      [1e200, 1e200 + 1e190],
+      [0, 1e-250],
+    ]);
+    expect(analysis.indices).toEqual([0, 2]);
+    expect(analysis.basisColumns).toEqual([
+      [1e-300, 1e-300],
+      [0, 1e-250],
+    ]);
+    expect(analysis.diagnostics[0]).toMatchObject({
+      accepted: true,
+      inputScale: 1e-300,
+    });
+  });
+
+  it("handles 1D subsets and validates candidate collections", () => {
+    expect(analyzeRealIndependentSubset([[0], [-1e-200], [4]])).toMatchObject({
+      dimension: 1,
+      rank: 1,
+      indices: [1],
+      basisMatrix: [[-1e-200]],
+    });
+    expect(() => analyzeRealIndependentSubset([])).toThrow(RangeError);
+    expect(() => analyzeRealIndependentSubset([[1], [1, 2]])).toThrow(
+      RangeError,
+    );
+    expect(() => analyzeRealIndependentSubset([[1]], -1)).toThrow(RangeError);
+  });
+
   it("analyzes bases and evaluates the standard map C A B^-1", () => {
     expect(analyzeRealBasis([[2]])).toMatchObject({
       dimension: 1,
@@ -192,6 +264,61 @@ describe("N-dimensional real operations", () => {
         [2, 4],
       ]),
     ).toBeNull();
+  });
+
+  it("converts maps in both directions for rectangular dimensions 1 through 3", () => {
+    const cases = [
+      {
+        standard: [[6]],
+        domain: [[2]],
+        codomain: [[3]],
+      },
+      {
+        standard: [
+          [2, 4],
+          [6, 8],
+          [10, 12],
+        ],
+        domain: [
+          [2, 0],
+          [0, 4],
+        ],
+        codomain: [
+          [1, 0, 0],
+          [0, 2, 0],
+          [0, 0, 5],
+        ],
+      },
+      {
+        standard: [[2, 6, 10]],
+        domain: [
+          [1, 0, 0],
+          [0, 2, 0],
+          [0, 0, 4],
+        ],
+        codomain: [[5]],
+      },
+    ] as const;
+
+    cases.forEach(({ standard, domain, codomain }) => {
+      const coordinate = standardToCoordinateRealMap(
+        standard,
+        domain,
+        codomain,
+      );
+      expect(coordinate).not.toBeNull();
+      expectMatrixClose(
+        coordinateToStandardRealMap(coordinate!, domain, codomain)!,
+        standard,
+      );
+    });
+
+    expect(
+      standardToCoordinateRealMap([[1, 2]], identityRealMatrix(2), [[0]]),
+    ).toBeNull();
+    expect(() =>
+      standardToCoordinateRealMap([[1, 2]], identityRealMatrix(3), [[1]]),
+    ).toThrow(RangeError);
   });
 
   it("supports rectangular effective maps with independent domain and codomain bases", () => {

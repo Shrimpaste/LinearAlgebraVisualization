@@ -3,3 +3,4 @@ export * from "./validation";
 export * from "./real";
 export * from "./complex";
 export * from "./decompositions";
+export * from "./eigensystem";

@@ -1,112 +1,80 @@
-import { useCallback, useMemo, useRef } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef } from "react";
 import { RotateCcw } from "lucide-react";
 import type { SceneProps } from "../../app/types";
 import {
-  IDENTITY_MAT2,
-  applyMat2,
-  columnsOfMat2,
-  interpolateMat2,
-  scaleVec2,
-  type EigenAnalysis,
-  type Mat2,
-  type Vec2,
-} from "../../math";
+  applyRealMatrix,
+  identityRealMatrix,
+  type ComplexScalar,
+  type Dimension,
+  type RealMatrix,
+} from "../../math/nd";
 import {
   VisualizationStage,
-  type VisualizationPointerEvent,
   type VisualizationRenderFrame,
   type VisualizationStageHandle,
 } from "../../components/VisualizationStage";
 import { SceneLayout } from "../../components/SceneLayout";
 import { ControlSection } from "../../components/ui/ControlSection";
+import { DynamicMatrixInput } from "../../components/ui/DynamicMatrixInput";
+import { DynamicVectorInput } from "../../components/ui/DynamicVectorInput";
 import { IconButton } from "../../components/ui/IconButton";
-import { MatrixInput } from "../../components/ui/MatrixInput";
 import { MetricList } from "../../components/ui/MetricList";
 import { Notice } from "../../components/ui/Notice";
 import { PresetGrid } from "../../components/ui/PresetGrid";
-import { RangeField } from "../../components/ui/RangeField";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
-import { Toggle } from "../../components/ui/Toggle";
-import { VectorInput } from "../../components/ui/VectorInput";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
   drawAxes,
-  drawCircle,
   drawGrid,
   drawInfiniteLine,
   drawLabel,
-  drawLine,
-  drawPoint,
-  drawTransformedCircle,
   drawVector,
   getCanvasPalette,
-  isWorldPointNearCanvas,
 } from "../../rendering";
-import { formatMatrix, formatNumber, formatVector } from "../../utils/format";
+import { formatNumber } from "../../utils/format";
+import { formatRealMatrix } from "../../utils/formatLinear";
 import {
+  basisVector,
+  changeEigenBasisMode,
   deriveEigen,
   eigenDefaults,
   eigenPresets,
   migrateEigenState,
+  resizeEigenState,
+  setBasisVector,
+  type EigenBasisMode,
 } from "./model";
 
-function analysisLabel(analysis: EigenAnalysis) {
-  switch (analysis.kind) {
-    case "two-real":
-      return "两个实特征方向";
-    case "repeated":
-      return "重根 · 全方向";
-    case "defective":
-      return "重根 · 单一方向";
-    case "complex":
-      return "共轭复根";
-  }
+const ThreeEigenStage = lazy(() =>
+  import("./ThreeEigenStage").then((module) => ({
+    default: module.ThreeEigenStage,
+  })),
+);
+
+function dynamicMatrix(matrix: RealMatrix, dimension: Dimension) {
+  return {
+    rows: dimension,
+    columns: dimension,
+    entries: matrix.flat(),
+  } as const;
 }
 
-function eigenFormula(analysis: EigenAnalysis) {
-  switch (analysis.kind) {
-    case "two-real":
-      return `λ₁ = ${formatNumber(analysis.eigenpairs[0].value)}, λ₂ = ${formatNumber(analysis.eigenpairs[1].value)}`;
-    case "repeated":
-    case "defective":
-      return `λ = ${formatNumber(analysis.eigenvalue)}（二重）`;
-    case "complex":
-      return `λ = ${formatNumber(analysis.realPart)} ± ${formatNumber(analysis.imaginaryMagnitude)}i`;
-  }
+function fromEntries(
+  entries: readonly number[],
+  dimension: Dimension,
+): RealMatrix {
+  return Array.from({ length: dimension }, (_, row) =>
+    Array.from(
+      { length: dimension },
+      (_, column) => entries[row * dimension + column] ?? 0,
+    ),
+  );
 }
 
-function eigenInsight(analysis: EigenAnalysis) {
-  switch (analysis.kind) {
-    case "two-real":
-      return (
-        <>
-          <strong>高亮直线在变换后不发生偏转。</strong>{" "}
-          向量只沿原方向按对应特征值伸缩或翻转。
-        </>
-      );
-    case "repeated":
-      return (
-        <>
-          <strong>矩阵是纯粹的标量伸缩。</strong>{" "}
-          平面中的每个非零方向都是特征方向。
-        </>
-      );
-    case "defective":
-      return (
-        <>
-          <strong>代数重数为二，几何重数只有一。</strong>{" "}
-          仅一条直线保持方向，矩阵不能在实数域对角化。
-        </>
-      );
-    case "complex":
-      return (
-        <>
-          <strong>实平面中没有不偏转的方向。</strong>{" "}
-          每个非零向量都同时经历旋转与伸缩。
-        </>
-      );
-  }
+function eigenvalueText(value: ComplexScalar) {
+  if (value.im === 0) return formatNumber(value.re);
+  return `${formatNumber(value.re)} ${value.im < 0 ? "−" : "+"} ${formatNumber(Math.abs(value.im))}i`;
 }
 
 export function EigenScene({ theme }: SceneProps) {
@@ -117,449 +85,280 @@ export function EigenScene({ theme }: SceneProps) {
     migrateEigenState,
   );
   const stageRef = useRef<VisualizationStageHandle>(null);
-  const dragging = useRef(false);
   const derived = useMemo(() => deriveEigen(state), [state]);
-  const { analysis } = derived;
-  const basisValid = derived.basisAnalysis.isBasis;
+  const eigensystem = derived.eigensystem;
+  const valid = derived.physicalMatrix !== null && eigensystem !== null;
+  const certified = eigensystem?.status === "real-eigenbasis";
 
   const render = useCallback(
-    (frame: VisualizationRenderFrame) => {
-      const { ctx, viewport, width, height, easedProgress } = frame;
+    ({ ctx, viewport, width, height }: VisualizationRenderFrame) => {
       const palette = getCanvasPalette(theme);
       ctx.fillStyle = palette.background;
       ctx.fillRect(0, 0, width, height);
       drawGrid(ctx, viewport, palette);
       drawAxes(ctx, viewport, palette);
-
-      if (state.basisMode === "custom") {
-        columnsOfMat2(state.basis).forEach((vector, index) => {
-          drawVector(ctx, viewport, vector, {
-            color: index === 0 ? palette.cyan : palette.yellow,
-            label: index === 0 ? "b₁" : "b₂",
-            width: 1.5,
-            dash: [4, 4],
-            alpha: 0.72,
-          });
+      if (!eigensystem || !derived.physicalMatrix) return;
+      if (state.dimension === 1) {
+        const value = eigensystem.eigenvalues[0]?.re ?? 0;
+        drawVector(ctx, viewport, [1.4, 0], {
+          color: palette.cyan,
+          label: "v₁",
+          width: 2.4,
         });
-        if (!basisValid) {
-          drawLabel(
-            ctx,
-            viewport,
-            [-3.35, 2.55],
-            "B 退化 · 坐标证书已阻止",
-            palette.red,
-            [0, 0],
-          );
-        }
+        drawVector(ctx, viewport, [1.4 * value, 0], {
+          color: palette.red,
+          label: "T(v₁)",
+          width: 2.8,
+        });
+        return;
       }
-
-      const animated = interpolateMat2(
-        IDENTITY_MAT2,
-        state.matrix,
-        easedProgress,
-      );
-      drawCircle(ctx, viewport, [0, 0], 1.35, {
-        stroke: palette.neutral,
-        dash: [4, 4],
-        alpha: 0.65,
-      });
-      drawTransformedCircle(
-        ctx,
-        viewport,
-        animated,
-        palette.red,
-        palette.redFill,
-        1.35,
-      );
-
-      if (state.showField) {
-        const samples = 28;
-        for (let index = 0; index < samples; index += 1) {
-          const angle = (index / samples) * Math.PI * 2;
-          const source: Vec2 = [Math.cos(angle) * 1.35, Math.sin(angle) * 1.35];
-          const target = applyMat2(animated, source);
-          drawLine(ctx, viewport, source, target, {
-            color: palette.neutral,
-            width: 0.9,
-            alpha: 0.22,
-          });
-          drawPoint(ctx, viewport, target, palette.neutral, 1.6, false);
-        }
-      }
-
-      if (analysis.kind === "two-real") {
-        analysis.eigenpairs.forEach((pair, index) => {
-          const color = index === 0 ? palette.blue : palette.yellow;
-          const label = index === 0 ? "q₁" : "q₂";
-          drawInfiniteLine(ctx, viewport, pair.vector, {
-            color,
-            width: 1.7,
-            alpha: 0.9,
-            dash: [7, 5],
-          });
-          drawVector(ctx, viewport, pair.vector, { color, label, width: 2.2 });
-          const animatedScale = 1 + (pair.value - 1) * easedProgress;
-          drawVector(ctx, viewport, scaleVec2(pair.vector, animatedScale), {
-            color,
-            label: `${label}·${formatNumber(animatedScale)}`,
-            width: 2.8,
-            alpha: 0.9,
-          });
-        });
-      } else if (analysis.kind === "repeated") {
-        drawCircle(ctx, viewport, [0, 0], 1.75, {
-          stroke: palette.blue,
-          width: 2,
-          alpha: 0.75,
-        });
+      if (eigensystem.status === "complex") {
         drawLabel(
           ctx,
           viewport,
-          [1.25, 1.25],
-          "所有方向均为特征方向",
-          palette.blue,
-          [8, -4],
-        );
-      } else if (analysis.kind === "defective") {
-        drawInfiniteLine(ctx, viewport, analysis.eigenvector, {
-          color: palette.blue,
-          width: 2,
-          dash: [7, 5],
-        });
-        drawVector(ctx, viewport, analysis.eigenvector, {
-          color: palette.blue,
-          label: "q",
-          width: 2.6,
-        });
-      } else {
-        const sense = analysis.rotationSense === "counterclockwise" ? "↺" : "↻";
-        drawLabel(
-          ctx,
-          viewport,
-          [1.4, 1.55],
-          `${sense} 无实特征方向`,
+          [-1.45, 1.65],
+          "无可认证实特征几何",
           palette.red,
           [0, 0],
         );
+        return;
       }
-
-      drawVector(ctx, viewport, state.seed, {
-        color: palette.cyan,
-        label: "seed",
-        width: 2.1,
-        dash: [5, 4],
+      eigensystem.realEigenpairs.forEach((pair, index) => {
+        const vector = [pair.vector[0]!, pair.vector[1]!] as const;
+        const color = index === 0 ? palette.cyan : palette.yellow;
+        drawInfiniteLine(ctx, viewport, vector, {
+          color,
+          width: 1.7,
+          dash: [7, 5],
+        });
+        drawVector(ctx, viewport, vector, {
+          color,
+          label: `v${index + 1}`,
+          width: 2.4,
+        });
+        const mapped = applyRealMatrix(derived.physicalMatrix!, pair.vector);
+        drawVector(ctx, viewport, [mapped[0]!, mapped[1]!], {
+          color: palette.red,
+          label: `T(v${index + 1})`,
+          width: 2.2,
+          alpha: 0.82,
+        });
       });
-      drawPoint(
-        ctx,
-        viewport,
-        state.seed,
-        palette.cyan,
-        4,
-        true,
-        palette.background,
-      );
-
-      if (state.showOrbit && derived.orbit.length > 1) {
-        const visibleSegments = Math.ceil(
-          easedProgress * (derived.orbit.length - 1),
-        );
-        for (let index = 1; index <= visibleSegments; index += 1) {
-          const previous = derived.orbit[index - 1]!;
-          const current = derived.orbit[index]!;
-          drawLine(ctx, viewport, previous, current, {
-            color: palette.red,
-            width: 1.4,
-            alpha: 0.35 + (index / derived.orbit.length) * 0.5,
-          });
-          drawPoint(ctx, viewport, current, palette.red, 3, false);
-          drawLabel(
-            ctx,
-            viewport,
-            current,
-            String(index),
-            palette.red,
-            [5, -5],
-          );
-        }
-      }
     },
-    [analysis, basisValid, derived.orbit, state, theme],
+    [derived.physicalMatrix, eigensystem, state.dimension, theme],
   );
 
-  const onPointerDown = useCallback(
-    (event: VisualizationPointerEvent) => {
-      if (!isWorldPointNearCanvas(state.seed, event.canvas, event.viewport)) {
-        return false;
-      }
-      dragging.current = true;
-      return true;
-    },
-    [state.seed],
-  );
-
-  const onPointerMove = useCallback(
-    (event: VisualizationPointerEvent) => {
-      if (!dragging.current) return;
-      setState((current) => ({ ...current, seed: event.world }));
-    },
-    [setState],
-  );
-
-  const stopDragging = () => {
-    dragging.current = false;
-  };
-
-  const setPreset = (matrix: Mat2) => {
-    setState((current) => ({ ...current, matrix }));
+  const setMode = (basisMode: EigenBasisMode) => {
+    setState((current) => changeEigenBasisMode(current, basisMode) ?? current);
     window.setTimeout(() => stageRef.current?.replay(), 0);
   };
-
-  const coordinateMetrics = derived.eigenvectors.flatMap((entry, index) => [
-    {
-      label: `${entry.label} 标准坐标`,
-      value: formatVector(entry.vector),
-      key: `eigenvector-${index + 1}-standard`,
-      tone: "blue" as const,
-    },
-    {
-      label: `[${entry.label}]B 基坐标`,
-      value:
-        entry.basisCoordinates === null
-          ? "—"
-          : formatVector(entry.basisCoordinates),
-      key: `eigenvector-${index + 1}-basis`,
-      tone: "yellow" as const,
-    },
-  ]);
-
-  const notice =
-    analysis.kind === "complex" ? (
-      <Notice tone="warning">判别式小于零，实数域内没有特征向量。</Notice>
-    ) : analysis.kind === "defective" ? (
-      <Notice tone="warning">仅有一个线性无关特征向量，矩阵不可对角化。</Notice>
-    ) : (
-      <Notice tone="success">实特征方向已在画布中高亮。</Notice>
-    );
+  const formula = eigensystem
+    ? eigensystem.eigenvalues
+        .map((value, index) => `λ${index + 1} = ${eigenvalueText(value)}`)
+        .join(", ")
+    : "特征系统不可用";
+  const unavailable =
+    eigensystem?.status === "complex"
+      ? "含非实特征值：保留复特征值文本，不绘制伪实几何。"
+      : eigensystem?.status === "defective"
+        ? "特征向量不足：算子在实数域有缺陷，实特征基不可用。"
+        : "求解结果未通过残差认证。";
 
   return (
     <SceneLayout
       id="eigen"
       index="03"
       title="特征系统"
-      subtitle="T: V → V · 同一空间中的特征方向与相似换基"
+      subtitle={`T: V → V · V = ℝ${state.dimension} · 单一共享坐标基 Q`}
       formulaLabel="特征值"
-      formula={eigenFormula(analysis)}
+      formula={formula}
       formulaStatus={
-        basisValid ? analysisLabel(analysis) : "B 无效 · 仅保留标准谱"
+        valid ? (certified ? "已认证实特征基" : "实特征基不可用") : "Q 无效"
       }
-      formulaTone={
-        !basisValid ||
-        analysis.kind === "complex" ||
-        analysis.kind === "defective"
-          ? "warning"
-          : "positive"
-      }
+      formulaTone={valid && certified ? "positive" : "warning"}
       insight={
-        basisValid ? (
-          eigenInsight(analysis)
+        certified ? (
+          <>
+            <strong>每个显示的 vᵢ 均通过 Avᵢ = λᵢvᵢ 残差认证。</strong> P
+            的列严格对应下方显示顺序。
+          </>
         ) : (
           <>
-            <strong>B 的列向量必须线性无关。</strong> 标准矩阵 A
-            的特征值仍成立，但不生成 [T]_B 或基坐标特征向量。
+            <strong>
+              {valid ? unavailable : "Q 必须由线性无关的 qᵢ 组成。"}
+            </strong>
           </>
         )
       }
       stage={
-        <VisualizationStage
-          key={isMobile ? "mobile" : "desktop"}
-          ref={stageRef}
-          render={render}
-          renderKey={state}
-          viewport={{
-            scale: isMobile ? 50 : 73,
-            center: isMobile ? [0, 0.3] : [0, 0],
-          }}
-          duration={1150}
-          ariaLabel="同一二维算子在标准坐标中的方向场、特征方向、候选基与幂迭代轨迹"
-          fallbackDescription={
-            `${analysisLabel(analysis)}，${eigenFormula(analysis)}。` +
-            (derived.coordinateMatrix !== null
-              ? `坐标矩阵为 ${formatMatrix(derived.coordinateMatrix)}。`
-              : "候选 B 不是基，坐标矩阵与基坐标向量未定义。")
-          }
-          showExportButton
-          exportFilename="basis-lab-eigen.png"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={stopDragging}
-          onPointerCancel={stopDragging}
-        />
+        state.dimension === 3 ? (
+          <Suspense
+            fallback={
+              <div className="visualization-stage__fallback">
+                正在按需加载三维特征视图…
+              </div>
+            }
+          >
+            <ThreeEigenStage
+              matrix={derived.physicalMatrix ?? identityRealMatrix(3)}
+              eigenpairs={eigensystem?.realEigenpairs ?? []}
+              hasRealGeometry={
+                eigensystem?.status !== "complex" &&
+                (eigensystem?.realEigenpairs.length ?? 0) > 0
+              }
+              theme={theme}
+            />
+          </Suspense>
+        ) : (
+          <VisualizationStage
+            key={`${state.dimension}-${isMobile ? "mobile" : "desktop"}`}
+            ref={stageRef}
+            render={render}
+            renderKey={state}
+            viewport={{ scale: isMobile ? 55 : 76, center: [0, 0] }}
+            duration={800}
+            ariaLabel={`${state.dimension}维实线性算子的认证特征方向`}
+            fallbackDescription={`${formula}。${certified ? "存在认证实特征基。" : unavailable}`}
+            showExportButton
+            exportFilename="basis-lab-eigen.png"
+          />
+        )
       }
       inspector={
         <>
           <ControlSection
-            title="线性算子"
-            caption="A = [T]_E 是 T: V → V 的标准坐标矩阵"
+            title="实线性自同空间"
+            caption="输入与输出都是同一个 V；维数仅为 1、2 或 3"
             action={
               <IconButton label="恢复默认特征实验" onClick={resetState}>
                 <RotateCcw size={15} />
               </IconButton>
             }
           >
-            <MatrixInput
-              label="标准坐标矩阵"
-              value={state.matrix}
-              onChange={(matrix) =>
-                setState((current) => ({ ...current, matrix }))
+            <SegmentedControl
+              label="实空间维数"
+              value={String(state.dimension)}
+              options={[
+                { value: "1", label: "1D" },
+                { value: "2", label: "2D" },
+                { value: "3", label: "3D" },
+              ]}
+              onChange={(value) =>
+                setState((current) =>
+                  resizeEigenState(current, Number(value) as Dimension),
+                )
               }
             />
-            <PresetGrid
-              label="特征系统预设"
-              presets={eigenPresets}
-              onSelect={setPreset}
-            />
           </ControlSection>
-
           <ControlSection
-            title="同空间坐标基"
-            caption="[T]_B = B⁻¹AB；输入与输出使用同一个 B"
+            title="算子坐标矩阵"
+            caption={
+              state.basisMode === "standard"
+                ? "A = [T]E"
+                : "[T]Q = Q⁻¹AQ；编辑的是当前 Q 坐标表示"
+            }
           >
             <SegmentedControl
-              label="特征坐标基模式"
+              label="显示与编辑坐标基"
               value={state.basisMode}
               options={[
                 { value: "standard", label: "标准基" },
-                { value: "custom", label: "自定义基" },
+                { value: "custom", label: "自定义 Q" },
               ]}
-              onChange={(basisMode) =>
-                setState((current) => ({ ...current, basisMode }))
+              onChange={setMode}
+            />
+            <DynamicMatrixInput
+              label="当前坐标中的算子矩阵"
+              symbol={state.basisMode === "standard" ? "A" : "[T]Q"}
+              value={dynamicMatrix(state.matrix, state.dimension)}
+              onChange={(value) =>
+                setState((current) => ({
+                  ...current,
+                  matrix: fromEntries(value.entries, current.dimension),
+                }))
+              }
+              testId="eigen-matrix-cell"
+            />
+            <PresetGrid
+              label="特征系统预设（当前坐标）"
+              presets={eigenPresets(state.dimension)}
+              onSelect={(matrix) =>
+                setState((current) => ({ ...current, matrix }))
               }
             />
-            {state.basisMode === "custom" && (
-              <>
-                <MatrixInput
-                  label="特征坐标基"
-                  symbol="B"
-                  value={state.basis}
-                  onChange={(basis) =>
-                    setState((current) => ({ ...current, basis }))
-                  }
-                />
-                {basisValid ? (
-                  <Notice tone="info">
-                    B 只改变同一算子的坐标表示，特征值保持不变。
-                  </Notice>
-                ) : (
-                  <Notice tone="warning">
-                    B 的列向量线性相关，无法生成 [T]_B 与基坐标特征向量。
-                  </Notice>
-                )}
-              </>
+          </ControlSection>
+          <ControlSection
+            title="共享自定义基 Q"
+            caption="按顺序输入 Q = (q₁, …, qₙ)；同一 Q 同时用于定义域与陪域"
+          >
+            {Array.from({ length: state.dimension }, (_, index) => (
+              <DynamicVectorInput
+                key={index}
+                label={`q${index + 1}`}
+                name={`q${index + 1}`}
+                value={{
+                  dimension: state.dimension,
+                  entries: basisVector(state.basis, index),
+                }}
+                onChange={(value) =>
+                  setState((current) => ({
+                    ...current,
+                    basis: setBasisVector(current.basis, index, value.entries),
+                  }))
+                }
+                tone={index === 0 ? "cyan" : index === 1 ? "yellow" : "blue"}
+                testId="eigen-basis-component"
+              />
+            ))}
+            {!derived.basisAnalysis.isBasis && (
+              <Notice tone="warning">
+                Q 退化；无法切换坐标或恢复物理算子。
+              </Notice>
             )}
           </ControlSection>
-
           <ControlSection
-            title="幂迭代"
-            caption="seed 使用标准坐标；反复应用 A 并归一化"
+            title="认证实特征基"
+            caption="显示顺序定义 P = (v₁, …, vₙ)，不计算 Jordan 形"
           >
-            <VectorInput
-              label="seed"
-              name="seed"
-              value={state.seed}
-              onChange={(seed) => setState((current) => ({ ...current, seed }))}
-            />
-            <RangeField
-              label="迭代次数"
-              value={state.iterations}
-              min={1}
-              max={9}
-              step={1}
-              format={(value) => `${value} 次`}
-              onChange={(iterations) =>
-                setState((current) => ({ ...current, iterations }))
-              }
-            />
-            <div className="toggle-grid">
-              <Toggle
-                label="方向场"
-                checked={state.showField}
-                onChange={(showField) =>
-                  setState((current) => ({ ...current, showField }))
-                }
+            {eigensystem?.realEigenpairs.map((pair, index) => (
+              <DynamicVectorInput
+                key={index}
+                label={`v${index + 1} · λ=${formatNumber(pair.value)} · residual=${formatNumber(pair.residual)}`}
+                name={`v${index + 1}`}
+                value={{ dimension: state.dimension, entries: pair.vector }}
+                onChange={() => undefined}
+                disabled
+                tone={index === 0 ? "cyan" : index === 1 ? "yellow" : "blue"}
+                testId="eigenvector-component"
               />
-              <Toggle
-                label="迭代轨迹"
-                checked={state.showOrbit}
-                onChange={(showOrbit) =>
-                  setState((current) => ({ ...current, showOrbit }))
-                }
+            ))}
+            {certified &&
+            eigensystem?.realEigenbasis &&
+            eigensystem.eigenbasisCoordinates ? (
+              <MetricList
+                metrics={[
+                  {
+                    label: "P = (v₁,…,vₙ)",
+                    value: formatRealMatrix(eigensystem.realEigenbasis),
+                    key: "eigenbasis-p",
+                    tone: "cyan",
+                  },
+                  {
+                    label: "[T]P = P⁻¹ A P",
+                    value: formatRealMatrix(eigensystem.eigenbasisCoordinates),
+                    key: "eigenbasis-coordinate-matrix",
+                    tone: "blue",
+                  },
+                  {
+                    label: "最大残差",
+                    value: formatNumber(eigensystem.eigenbasisResidual ?? 0),
+                    key: "eigenbasis-residual",
+                  },
+                ]}
               />
-            </div>
-          </ControlSection>
-
-          <ControlSection title="谱读数">
-            <MetricList
-              metrics={[
-                {
-                  label: "tr A",
-                  value: formatNumber(analysis.trace),
-                  key: "trace",
-                },
-                {
-                  label: "det A",
-                  value: formatNumber(analysis.determinant),
-                  key: "determinant",
-                },
-                {
-                  label: "Δ",
-                  value: formatNumber(analysis.discriminant),
-                  key: "discriminant",
-                  tone: analysis.discriminant < 0 ? "red" : "blue",
-                },
-                {
-                  label: "seed",
-                  value: formatVector(state.seed),
-                  key: "seed",
-                  tone: "cyan",
-                },
-              ]}
-            />
-            {notice}
-          </ControlSection>
-
-          <ControlSection
-            title="换基证书"
-            caption="相似矩阵与实特征向量的双坐标读数"
-          >
-            <MetricList
-              metrics={[
-                {
-                  label: "det B",
-                  value: formatNumber(derived.basisAnalysis.determinant),
-                  key: "eigen-basis-determinant",
-                  tone: basisValid ? "cyan" : "red",
-                },
-                {
-                  label: "rank B",
-                  value: String(derived.basisAnalysis.rank),
-                  key: "eigen-basis-rank",
-                },
-                {
-                  label: "[T]_B = B⁻¹AB",
-                  value:
-                    derived.coordinateMatrix === null
-                      ? "—"
-                      : formatMatrix(derived.coordinateMatrix),
-                  key: "eigen-coordinate-matrix",
-                  tone: basisValid ? "cyan" : "red",
-                },
-              ]}
-            />
-            {coordinateMetrics.length > 0 ? (
-              <MetricList metrics={coordinateMetrics} />
             ) : (
-              <Notice tone="info">
-                当前实平面没有实特征向量，因此没有实坐标向量可列出。
+              <Notice tone="warning">
+                [T]P = P⁻¹AP：不可用。{valid ? unavailable : "Q 无效。"}
               </Notice>
             )}
           </ControlSection>

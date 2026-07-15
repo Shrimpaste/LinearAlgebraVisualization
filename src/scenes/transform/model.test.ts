@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  changeTransformBasisMode,
+  changeTransformSharedBasis,
   deriveTransform,
   migrateTransformState,
   resizeTransformState,
@@ -23,7 +25,7 @@ describe("dimension-generic transform scene model", () => {
     });
 
     expect(migrated).toMatchObject({
-      version: 3,
+      version: 4,
       rows: 2,
       columns: 2,
       matrix: [
@@ -43,7 +45,7 @@ describe("dimension-generic transform scene model", () => {
       showSphere: false,
       mode: "single",
     });
-    expect(migrateTransformState({ version: 4, rows: 3 })).toBe(
+    expect(migrateTransformState({ version: 5, rows: 3 })).toBe(
       transformDefaults,
     );
   });
@@ -202,6 +204,104 @@ describe("dimension-generic transform scene model", () => {
     });
     expect(badCodomain.valid).toBe(false);
     expect(badCodomain.forwardMatrix).toBeNull();
+  });
+
+  it("converts both active matrices transactionally without changing the physical map", () => {
+    const standard = {
+      ...transformDefaults,
+      mode: "composition" as const,
+      matrix: [
+        [2, 1],
+        [0, 3],
+      ],
+      secondMatrix: [
+        [1, -1],
+        [2, 0],
+      ],
+      domainBasis: [
+        [2, 0],
+        [0, 1],
+      ],
+      codomainBasis: [
+        [1, 1],
+        [0, 2],
+      ],
+    };
+    const expected = deriveTransform(standard);
+    const custom = changeTransformBasisMode(standard, "custom");
+    const customDerived = deriveTransform(custom);
+
+    expect(custom.basisMode).toBe("custom");
+    expect(customDerived.firstForwardMatrix?.[0]?.[0]).toBeCloseTo(
+      expected.firstForwardMatrix?.[0]?.[0] ?? 0,
+    );
+    expect(customDerived.firstForwardMatrix?.[0]?.[1]).toBeCloseTo(
+      expected.firstForwardMatrix?.[0]?.[1] ?? 0,
+    );
+    expect(customDerived.firstForwardMatrix?.[1]?.[0]).toBeCloseTo(
+      expected.firstForwardMatrix?.[1]?.[0] ?? 0,
+    );
+    expect(customDerived.firstForwardMatrix?.[1]?.[1]).toBeCloseTo(
+      expected.firstForwardMatrix?.[1]?.[1] ?? 0,
+    );
+    expect(customDerived.secondForwardMatrix?.[0]?.[0]).toBeCloseTo(
+      expected.secondForwardMatrix?.[0]?.[0] ?? 0,
+    );
+    expect(customDerived.secondForwardMatrix?.[1]?.[0]).toBeCloseTo(
+      expected.secondForwardMatrix?.[1]?.[0] ?? 0,
+    );
+    const roundTrip = changeTransformBasisMode(custom, "standard");
+    expect(roundTrip.matrix[0]?.[0]).toBeCloseTo(2);
+    expect(roundTrip.matrix[0]?.[1]).toBeCloseTo(1);
+    expect(roundTrip.secondMatrix[1]?.[0]).toBeCloseTo(2);
+  });
+
+  it("persists shared same-space basis semantics and rejects invalid conversion atomically", () => {
+    const shared = migrateTransformState({
+      ...transformDefaults,
+      version: 4,
+      basisMode: "custom",
+      sharedBasis: true,
+      domainBasis: [
+        [1, 1],
+        [0, 1],
+      ],
+      codomainBasis: [
+        [9, 0],
+        [0, 9],
+      ],
+    });
+    expect(shared.sharedBasis).toBe(true);
+    expect(deriveTransform(shared).codomainBasisAnalysis.determinant).toBe(1);
+
+    const independent = {
+      ...shared,
+      sharedBasis: false,
+      codomainBasis: [
+        [2, 0],
+        [0, 1],
+      ],
+    };
+    const beforeSharing = deriveTransform(independent);
+    const afterSharing = deriveTransform(
+      changeTransformSharedBasis(independent, true),
+    );
+    expect(afterSharing.firstForwardMatrix?.[0]?.[0]).toBeCloseTo(
+      beforeSharing.firstForwardMatrix?.[0]?.[0] ?? 0,
+    );
+    expect(afterSharing.firstForwardMatrix?.[1]?.[1]).toBeCloseTo(
+      beforeSharing.firstForwardMatrix?.[1]?.[1] ?? 0,
+    );
+
+    const invalid = {
+      ...transformDefaults,
+      domainBasis: [
+        [1, 2],
+        [2, 4],
+      ],
+    };
+    expect(changeTransformBasisMode(invalid, "custom")).toBe(invalid);
+    expect(resizeTransformState(shared, 2, 3).sharedBasis).toBe(false);
   });
 
   it("resizes map, vector, and bases while preserving overlapping values", () => {

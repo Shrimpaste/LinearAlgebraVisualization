@@ -28,6 +28,7 @@ import {
 import { IconButton } from "../../components/ui/IconButton";
 import { MetricList } from "../../components/ui/MetricList";
 import { Notice } from "../../components/ui/Notice";
+import { OrderedRealBasisInput } from "../../components/ui/OrderedRealBasisInput";
 import { PresetGrid } from "../../components/ui/PresetGrid";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SelectField } from "../../components/ui/SelectField";
@@ -48,6 +49,8 @@ import {
 import { formatNumber } from "../../utils/format";
 import { formatRealVector } from "../../utils/formatLinear";
 import {
+  changeTransformBasisMode,
+  changeTransformSharedBasis,
   deriveTransform,
   migrateTransformState,
   rectangularIdentity,
@@ -153,6 +156,10 @@ export function TransformScene({ theme }: SceneProps) {
   const dragging = useRef<"vector" | null>(null);
   const derived = useMemo(() => deriveTransform(state), [state]);
   const usesThree = state.rows === 3 || state.columns === 3;
+  const activeCodomainBasis =
+    state.sharedBasis && state.rows === state.columns
+      ? state.domainBasis
+      : state.codomainBasis;
   const presets = useMemo(
     () => transformPresetsForShape(state.rows, state.columns),
     [state.columns, state.rows],
@@ -246,18 +253,43 @@ export function TransformScene({ theme }: SceneProps) {
 
       if (state.basisMode === "custom") {
         for (let index = 0; index < state.columns; index += 1) {
-          drawVector(ctx, viewport, basisColumn(state.domainBasis, index), {
+          const source = basisColumn(state.domainBasis, index);
+          drawVector(ctx, viewport, source, {
             color: index === 0 ? palette.blue : palette.yellow,
-            label: "b" + String(index + 1),
+            label: "v" + String(index + 1),
             width: 1.4,
             dash: [5, 4],
             alpha: 0.72,
           });
+          if (derived.firstForwardMatrix) {
+            const stageOne = applyMat2(
+              toMat2(derived.firstForwardMatrix),
+              source,
+            );
+            drawVector(ctx, viewport, stageOne, {
+              color: palette.cyan,
+              label: "T₁(v" + String(index + 1) + ")",
+              width: 1.7,
+              alpha: 0.8,
+            });
+            if (derived.compositionEnabled && derived.forwardMatrix) {
+              drawVector(
+                ctx,
+                viewport,
+                applyMat2(toMat2(derived.forwardMatrix), source),
+                {
+                  color: palette.red,
+                  label: "T₂T₁(v" + String(index + 1) + ")",
+                  width: 2,
+                },
+              );
+            }
+          }
         }
         for (let index = 0; index < state.rows; index += 1) {
-          drawVector(ctx, viewport, basisColumn(state.codomainBasis, index), {
+          drawVector(ctx, viewport, basisColumn(activeCodomainBasis, index), {
             color: index === 0 ? palette.cyan : palette.neutral,
-            label: "c" + String(index + 1),
+            label: "w" + String(index + 1),
             width: 1.3,
             dash: [2, 4],
             alpha: 0.65,
@@ -268,6 +300,12 @@ export function TransformScene({ theme }: SceneProps) {
       const animatedOutput = applyMat2(animatedMatrix, sourceVector);
       ctx.canvas.dataset.transformOutput =
         observedTransformOutput(animatedOutput);
+      ctx.canvas.dataset.transformBasisPath =
+        state.basisMode === "custom" && derived.compositionEnabled
+          ? "v_i->T1(v_i)->T2T1(v_i)"
+          : state.basisMode === "custom"
+            ? "v_i->T(v_i)"
+            : "standard";
       if (state.showTrail) {
         const points = 28;
         let previous = sourceVector;
@@ -323,7 +361,7 @@ export function TransformScene({ theme }: SceneProps) {
         });
       }
     },
-    [derived, state, theme],
+    [activeCodomainBasis, derived, state, theme],
   );
 
   const onPointerDown = useCallback(
@@ -468,6 +506,16 @@ export function TransformScene({ theme }: SceneProps) {
                   rectangularIdentity(state.rows, state.columns)
                 }
                 intermediateMatrix={derived.stageOneMatrix}
+                basisVectors={
+                  state.basisMode === "custom" ? state.domainBasis : null
+                }
+                basisPath={
+                  state.basisMode === "custom" && derived.compositionEnabled
+                    ? "v_i->T1(v_i)->T2T1(v_i)"
+                    : state.basisMode === "custom"
+                      ? "v_i->T(v_i)"
+                      : "standard"
+                }
                 vector={state.vector}
                 inputDimension={state.columns}
                 outputDimension={state.rows}
@@ -659,43 +707,52 @@ export function TransformScene({ theme }: SceneProps) {
                 { value: "custom", label: "自定义基" },
               ]}
               onChange={(basisMode) =>
-                setState((current) => ({ ...current, basisMode }))
+                setState((current) =>
+                  changeTransformBasisMode(current, basisMode),
+                )
               }
             />
             {state.basisMode === "custom" && (
               <>
-                <DynamicMatrixInput
-                  label="基矩阵"
-                  symbol="B"
-                  value={toMatrixInput(
-                    state.domainBasis,
-                    state.columns,
-                    state.columns,
-                  )}
-                  onChange={(matrix) =>
+                {state.rows === state.columns && (
+                  <Toggle
+                    label="W = V，共享同一有序基"
+                    checked={state.sharedBasis}
+                    onChange={(sharedBasis) =>
+                      setState((current) =>
+                        changeTransformSharedBasis(current, sharedBasis),
+                      )
+                    }
+                  />
+                )}
+                <OrderedRealBasisInput
+                  label="定义域有序基"
+                  symbol="v"
+                  basis={state.domainBasis}
+                  dimension={state.columns}
+                  onChange={(domainBasis) =>
                     setState((current) => ({
                       ...current,
-                      domainBasis: fromMatrixInput(matrix),
+                      domainBasis,
+                      codomainBasis: current.sharedBasis
+                        ? domainBasis
+                        : current.codomainBasis,
                     }))
                   }
                   testId="domain-basis-cell"
                 />
-                <DynamicMatrixInput
-                  label="目标基矩阵"
-                  symbol="C"
-                  value={toMatrixInput(
-                    state.codomainBasis,
-                    state.rows,
-                    state.rows,
-                  )}
-                  onChange={(matrix) =>
-                    setState((current) => ({
-                      ...current,
-                      codomainBasis: fromMatrixInput(matrix),
-                    }))
-                  }
-                  testId="codomain-basis-cell"
-                />
+                {(!state.sharedBasis || state.rows !== state.columns) && (
+                  <OrderedRealBasisInput
+                    label="陪域有序基"
+                    symbol="w"
+                    basis={state.codomainBasis}
+                    dimension={state.rows}
+                    onChange={(codomainBasis) =>
+                      setState((current) => ({ ...current, codomainBasis }))
+                    }
+                    testId="codomain-basis-cell"
+                  />
+                )}
                 {!basisValid && (
                   <Notice tone="warning">
                     基向量线性相关或数值上过度病态，无法稳定建立坐标映射。

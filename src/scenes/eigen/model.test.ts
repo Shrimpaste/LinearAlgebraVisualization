@@ -1,112 +1,144 @@
 import { describe, expect, it } from "vitest";
-import { IDENTITY_MAT2, type Mat2 } from "../../math";
 import {
+  changeEigenBasisMode,
   deriveEigen,
   eigenDefaults,
   migrateEigenState,
-  type EigenState,
+  resizeEigenState,
+  setBasisVector,
 } from "./model";
 
-function expectMatrixClose(actual: Mat2 | null, expected: Mat2) {
-  expect(actual).not.toBeNull();
-  expected.forEach((value, index) => {
-    expect(actual![index]).toBeCloseTo(value, 10);
-  });
+function expectMatrixClose(
+  actual: readonly (readonly number[])[],
+  expected: readonly (readonly number[])[],
+) {
+  expected.forEach((row, rowIndex) =>
+    row.forEach((value, columnIndex) =>
+      expect(actual[rowIndex]![columnIndex]).toBeCloseTo(value, 10),
+    ),
+  );
 }
 
-describe("eigen scene basis model", () => {
-  it("migrates the deployed unversioned state into the standard basis", () => {
+describe("eigen scene v2 endomorphism model", () => {
+  it("migrates v1 and drops all removed power/field state", () => {
     const migrated = migrateEigenState({
-      matrix: [3, 1, 0, 2],
-      seed: [2, -1],
-      iterations: 12,
-      showField: false,
-      showOrbit: false,
-    });
-
-    expect(migrated).toEqual({
       version: 1,
       matrix: [3, 1, 0, 2],
-      basisMode: "standard",
-      basis: IDENTITY_MAT2,
-      seed: [2, -1],
+      basis: [1, 1, 0, 1],
+      basisMode: "custom",
+      seed: [9, 9],
       iterations: 9,
-      showField: false,
-      showOrbit: false,
+      showField: true,
+      showOrbit: true,
     });
+    expect(migrated).toEqual({
+      version: 2,
+      dimension: 2,
+      matrix: [
+        [3, 1],
+        [0, 2],
+      ],
+      basisMode: "custom",
+      basis: [
+        [1, 1],
+        [0, 1],
+      ],
+    });
+    expect(migrated).not.toHaveProperty("seed");
+    expect(migrated).not.toHaveProperty("iterations");
     expect(migrateEigenState({ version: 99 })).toBe(eigenDefaults);
   });
 
-  it("computes the same endomorphism in B coordinates as B^-1 A B", () => {
-    const state: EigenState = {
+  it("supports dimensions 1-3 and ordered q_i columns", () => {
+    const resized = resizeEigenState(eigenDefaults, 3);
+    expect(resized.dimension).toBe(3);
+    expect(resized.matrix).toHaveLength(3);
+    const basis = setBasisVector(resized.basis, 1, [4, 5, 6]);
+    expect(basis.map((row) => row[1])).toEqual([4, 5, 6]);
+  });
+
+  it("converts displayed matrices on basis toggle without changing T", () => {
+    const state = {
       ...eigenDefaults,
-      matrix: [2, 0, 0, 3],
-      basisMode: "custom",
-      basis: [1, 1, 0, 1],
+      matrix: [
+        [2, 0],
+        [0, 3],
+      ],
+      basis: [
+        [1, 1],
+        [0, 1],
+      ],
     };
-    const derived = deriveEigen(state);
-
-    expect(derived.basisAnalysis.isBasis).toBe(true);
-    expectMatrixClose(derived.coordinateMatrix, [2, -1, 0, 3]);
-    expect(derived.coordinateAnalysis).not.toBeNull();
-    expect(derived.coordinateAnalysis!.trace).toBeCloseTo(
-      derived.analysis.trace,
-      10,
-    );
-    expect(derived.coordinateAnalysis!.determinant).toBeCloseTo(
-      derived.analysis.determinant,
-      10,
-    );
-    expect(derived.analysis.kind).toBe("two-real");
-    expect(derived.coordinateAnalysis!.kind).toBe("two-real");
-    if (
-      derived.analysis.kind === "two-real" &&
-      derived.coordinateAnalysis!.kind === "two-real"
-    ) {
-      expect(
-        derived.coordinateAnalysis!.eigenpairs.map((pair) => pair.value),
-      ).toEqual(derived.analysis.eigenpairs.map((pair) => pair.value));
-    }
-
-    const lambdaThree = derived.eigenvectors.find(
-      (entry) => Math.abs(entry.eigenvalue - 3) < 1e-10,
-    );
-    expect(lambdaThree?.vector).toEqual([0, 1]);
-    expect(lambdaThree?.basisCoordinates?.[0]).toBeCloseTo(-1, 10);
-    expect(lambdaThree?.basisCoordinates?.[1]).toBeCloseTo(1, 10);
+    const custom = changeEigenBasisMode(state, "custom");
+    expect(custom).not.toBeNull();
+    expectMatrixClose(custom!.matrix, [
+      [2, -1],
+      [0, 3],
+    ]);
+    expectMatrixClose(deriveEigen(custom!).physicalMatrix!, state.matrix);
+    const standard = changeEigenBasisMode(custom!, "standard");
+    expectMatrixClose(standard!.matrix, state.matrix);
   });
 
-  it("blocks coordinate matrices and vectors when B is not a basis", () => {
-    const derived = deriveEigen({
-      ...eigenDefaults,
-      basisMode: "custom",
-      basis: [1, 2, 2, 4],
-    });
-
-    expect(derived.analysis.kind).toBe("two-real");
-    expect(derived.basisAnalysis).toMatchObject({
-      isBasis: false,
-      rank: 1,
-      orientation: "degenerate",
-    });
-    expect(derived.coordinateMatrix).toBeNull();
-    expect(derived.coordinateAnalysis).toBeNull();
+  it("refuses a mode switch with a degenerate shared Q", () => {
     expect(
-      derived.eigenvectors.every((entry) => entry.basisCoordinates === null),
-    ).toBe(true);
+      changeEigenBasisMode(
+        {
+          ...eigenDefaults,
+          basis: [
+            [1, 2],
+            [2, 4],
+          ],
+        },
+        "custom",
+      ),
+    ).toBeNull();
   });
 
-  it("ignores a stored custom candidate while standard-basis mode is active", () => {
+  it("ties P^-1 A P to the displayed certified eigenbasis", () => {
     const derived = deriveEigen({
-      ...eigenDefaults,
-      basisMode: "standard",
-      basis: [1, 2, 2, 4],
+      ...resizeEigenState(eigenDefaults, 3),
+      matrix: [
+        [3, 1, 0],
+        [0, 2, 1],
+        [0, 0, 1],
+      ],
     });
-
-    expect(derived.basisAnalysis.isBasis).toBe(true);
-    expectMatrixClose(derived.coordinateMatrix, eigenDefaults.matrix);
-    expect(derived.eigenvectors[0]!.basisCoordinates).toEqual(
-      derived.eigenvectors[0]!.vector,
+    expect(derived.eigensystem?.status).toBe("real-eigenbasis");
+    const result = derived.eigensystem!;
+    expect(result.realEigenpairs.map((pair) => pair.value)).toEqual([3, 2, 1]);
+    result.realEigenpairs.forEach((pair) =>
+      expect(pair.residual).toBeLessThan(1e-10),
     );
+    expectMatrixClose(result.eigenbasisCoordinates!, [
+      [3, 0, 0],
+      [0, 2, 0],
+      [0, 0, 1],
+    ]);
+  });
+
+  it("reports explicit defective and complex-real unavailability", () => {
+    expect(
+      deriveEigen({
+        ...eigenDefaults,
+        matrix: [
+          [1, 1],
+          [0, 1],
+        ],
+      }).eigensystem?.status,
+    ).toBe("defective");
+    const complex = deriveEigen({
+      ...eigenDefaults,
+      matrix: [
+        [0, -1],
+        [1, 0],
+      ],
+    }).eigensystem!;
+    expect(complex.status).toBe("complex");
+    expect(complex.eigenvalues).toEqual([
+      { re: 0, im: 1 },
+      { re: 0, im: -1 },
+    ]);
+    expect(complex.realEigenbasis).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useRef } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef } from "react";
 import { RotateCcw } from "lucide-react";
 import type { SceneProps } from "../../app/types";
-import { addVec2, scaleVec2, type Vec2 } from "../../math";
+import type { Dimension, RealVector } from "../../math/nd";
 import {
   VisualizationStage,
   type VisualizationPointerEvent,
@@ -10,20 +10,20 @@ import {
 } from "../../components/VisualizationStage";
 import { SceneLayout } from "../../components/SceneLayout";
 import { ControlSection } from "../../components/ui/ControlSection";
+import { DynamicVectorInput } from "../../components/ui/DynamicVectorInput";
 import { IconButton } from "../../components/ui/IconButton";
 import { MetricList } from "../../components/ui/MetricList";
 import { Notice } from "../../components/ui/Notice";
-import { PresetGrid } from "../../components/ui/PresetGrid";
 import { RangeField } from "../../components/ui/RangeField";
 import { SelectField } from "../../components/ui/SelectField";
 import { Toggle } from "../../components/ui/Toggle";
-import { VectorInput } from "../../components/ui/VectorInput";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
   drawAxes,
   drawGrid,
   drawInfiniteLine,
+  drawLabel,
   drawLine,
   drawPoint,
   drawVector,
@@ -31,16 +31,23 @@ import {
   isWorldPointNearCanvas,
   lerpVec,
 } from "../../rendering";
-import { formatNumber, formatVector } from "../../utils/format";
+import { formatNumber } from "../../utils/format";
+import { formatRealVector } from "../../utils/formatLinear";
 import {
   deriveSpan,
   migrateSpanState,
+  resizeSpanDimension,
   resizeSpanState,
   spanDefaults,
-  spanPresets,
   type SpanVectorCount,
 } from "./model";
+import type { ThreeSpanStageHandle } from "./ThreeSpanStage";
 
+const ThreeSpanStage = lazy(() =>
+  import("./ThreeSpanStage").then((module) => ({
+    default: module.ThreeSpanStage,
+  })),
+);
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 const vectorTones = ["cyan", "yellow", "blue", "red"] as const;
 const subscripts = ["₁", "₂", "₃", "₄", "₅", "₆"] as const;
@@ -48,27 +55,31 @@ const countOptions = [1, 2, 3, 4, 5, 6].map((count) => ({
   value: String(count) as `${SpanVectorCount}`,
   label: `${count} 个向量`,
 }));
-
+const dimensionOptions = [1, 2, 3].map((dimension) => ({
+  value: String(dimension) as `${Dimension}`,
+  label: `R${dimension}`,
+}));
 function vectorLabel(index: number) {
   return `v${subscripts[index] ?? String(index + 1)}`;
 }
-
 function coefficientLabel(index: number) {
   return `c${subscripts[index] ?? String(index + 1)}`;
 }
-
 function vectorTone(index: number) {
   return vectorTones[index % vectorTones.length]!;
 }
-
 function vectorColor(
   index: number,
   palette: ReturnType<typeof getCanvasPalette>,
 ) {
-  const colors = [palette.cyan, palette.yellow, palette.blue, palette.red];
-  return colors[index % colors.length]!;
+  return [palette.cyan, palette.yellow, palette.blue, palette.red][index % 4]!;
 }
-
+function asCanvasVector(
+  vector: RealVector,
+  dimension: Dimension,
+): readonly [number, number] {
+  return [vector[0] ?? 0, dimension === 1 ? 0 : (vector[1] ?? 0)];
+}
 function formatCombination(coefficients: readonly number[]) {
   return coefficients
     .map((coefficient, index) => {
@@ -93,8 +104,15 @@ export function SpanScene({ theme }: SceneProps) {
     migrateSpanState,
   );
   const stageRef = useRef<VisualizationStageHandle>(null);
+  const threeStageRef = useRef<ThreeSpanStageHandle>(null);
   const dragging = useRef<number | "target" | null>(null);
   const derived = useMemo(() => deriveSpan(state), [state]);
+  const usesThree = state.dimension === 3;
+
+  const replay = useCallback(() => {
+    if (usesThree) threeStageRef.current?.replay();
+    else stageRef.current?.replay();
+  }, [usesThree]);
 
   const render = useCallback(
     (frame: VisualizationRenderFrame) => {
@@ -104,63 +122,63 @@ export function SpanScene({ theme }: SceneProps) {
       ctx.fillRect(0, 0, width, height);
       drawGrid(ctx, viewport, palette);
       drawAxes(ctx, viewport, palette);
-
-      const spanProgress = clamp01((easedProgress - 0.38) / 0.62);
-      const firstBasisIndex = derived.basisIndices[0];
-      const secondBasisIndex = derived.basisIndices[1];
-      const firstBasis =
-        firstBasisIndex === undefined
+      const spanProgress = clamp01((easedProgress - 0.35) / 0.65);
+      const firstIndex = derived.basisIndices[0];
+      const secondIndex = derived.basisIndices[1];
+      const first =
+        firstIndex === undefined
           ? undefined
-          : state.vectors[firstBasisIndex];
-      const secondBasis =
-        secondBasisIndex === undefined
+          : asCanvasVector(state.vectors[firstIndex]!, state.dimension);
+      const second =
+        secondIndex === undefined
           ? undefined
-          : state.vectors[secondBasisIndex];
-
+          : asCanvasVector(state.vectors[secondIndex]!, state.dimension);
       if (
         derived.rank === 2 &&
         state.showLattice &&
-        firstBasis &&
-        secondBasis &&
+        first &&
+        second &&
         spanProgress > 0
       ) {
         ctx.save();
         ctx.globalAlpha = spanProgress;
         for (let coefficient = -6; coefficient <= 6; coefficient += 1) {
-          const firstOffset = scaleVec2(firstBasis, coefficient);
+          const firstOffset: [number, number] = [
+            first[0] * coefficient,
+            first[1] * coefficient,
+          ];
           drawLine(
             ctx,
             viewport,
-            addVec2(firstOffset, scaleVec2(secondBasis, -7)),
-            addVec2(firstOffset, scaleVec2(secondBasis, 7)),
-            {
-              color: vectorColor(firstBasisIndex!, palette),
-              width: 1,
-              alpha: 0.3,
-            },
+            [firstOffset[0] - second[0] * 7, firstOffset[1] - second[1] * 7],
+            [firstOffset[0] + second[0] * 7, firstOffset[1] + second[1] * 7],
+            { color: vectorColor(firstIndex!, palette), width: 1, alpha: 0.3 },
           );
-          const secondOffset = scaleVec2(secondBasis, coefficient);
+          const secondOffset: [number, number] = [
+            second[0] * coefficient,
+            second[1] * coefficient,
+          ];
           drawLine(
             ctx,
             viewport,
-            addVec2(secondOffset, scaleVec2(firstBasis, -7)),
-            addVec2(secondOffset, scaleVec2(firstBasis, 7)),
+            [secondOffset[0] - first[0] * 7, secondOffset[1] - first[1] * 7],
+            [secondOffset[0] + first[0] * 7, secondOffset[1] + first[1] * 7],
             {
-              color: vectorColor(secondBasisIndex!, palette),
+              color: vectorColor(secondIndex!, palette),
               width: 1,
               alpha: 0.27,
             },
           );
         }
         ctx.restore();
-      } else if (derived.rank === 1 && firstBasis && spanProgress > 0) {
-        drawInfiniteLine(ctx, viewport, firstBasis, {
-          color: vectorColor(firstBasisIndex!, palette),
+      } else if (derived.rank === 1 && first && spanProgress > 0) {
+        drawInfiniteLine(ctx, viewport, first, {
+          color: vectorColor(firstIndex!, palette),
           width: 8,
           alpha: 0.11 * spanProgress,
         });
-        drawInfiniteLine(ctx, viewport, firstBasis, {
-          color: vectorColor(firstBasisIndex!, palette),
+        drawInfiniteLine(ctx, viewport, first, {
+          color: vectorColor(firstIndex!, palette),
           width: 1.8,
           alpha: spanProgress,
         });
@@ -175,38 +193,60 @@ export function SpanScene({ theme }: SceneProps) {
           palette.background,
         );
       }
-
       const basisSet = new Set(derived.basisIndices);
       state.vectors.forEach((vector, index) => {
-        const revealProgress = clamp01(easedProgress * 1.7 - index * 0.11);
-        const animated = lerpVec([0, 0], vector, revealProgress);
+        const point = asCanvasVector(vector, state.dimension);
+        const reveal = clamp01(easedProgress * 1.7 - index * 0.11);
+        const animated = lerpVec([0, 0], point, reveal);
         const color = vectorColor(index, palette);
-        drawVector(ctx, viewport, animated, {
-          color,
-          label: vectorLabel(index),
-          width: basisSet.has(index) ? 3 : 2,
-          alpha: basisSet.has(index) ? 1 : 0.78,
-        });
-        drawPoint(
-          ctx,
-          viewport,
-          vector,
-          color,
-          basisSet.has(index) ? 4.5 : 3.5,
-          true,
-          palette.background,
-        );
-      });
-
-      if (easedProgress > 0.58) {
-        const combinationProgress = clamp01((easedProgress - 0.58) / 0.42);
-        let origin: Vec2 = [0, 0];
-        state.vectors.forEach((vector, index) => {
-          const contribution = scaleVec2(
-            vector,
-            (state.coefficients[index] ?? 0) * combinationProgress,
+        if (Math.hypot(...point) > 0) {
+          drawVector(ctx, viewport, animated, {
+            color,
+            label: vectorLabel(index),
+            width: basisSet.has(index) ? 3 : 2,
+            alpha: basisSet.has(index) ? 1 : 0.72,
+          });
+          drawPoint(
+            ctx,
+            viewport,
+            point,
+            color,
+            basisSet.has(index) ? 4.5 : 3.5,
+            true,
+            palette.background,
           );
-          if (Math.hypot(contribution[0], contribution[1]) > 1e-8) {
+        } else {
+          const offset: [number, number] = [0, -14 - index * 13];
+          drawPoint(
+            ctx,
+            viewport,
+            [0, 0],
+            color,
+            4 + (index % 2),
+            true,
+            palette.background,
+          );
+          drawLabel(
+            ctx,
+            viewport,
+            [0, 0],
+            `${vectorLabel(index)} = 0`,
+            color,
+            offset,
+          );
+        }
+      });
+      if (easedProgress > 0.58) {
+        const progress = clamp01((easedProgress - 0.58) / 0.42);
+        let origin: [number, number] = [0, 0];
+        state.vectors.forEach((vector, index) => {
+          const point = asCanvasVector(vector, state.dimension);
+          const coefficient = (state.coefficients[index] ?? 0) * progress;
+          const contribution: [number, number] = [
+            point[0] * coefficient,
+            point[1] * coefficient,
+          ];
+          if (Math.hypot(...contribution) > 1e-12)
             drawVector(ctx, viewport, contribution, {
               color: vectorColor(index, palette),
               label: `${coefficientLabel(index)}${vectorLabel(index)}`,
@@ -214,8 +254,7 @@ export function SpanScene({ theme }: SceneProps) {
               width: 1.7,
               alpha: 0.72,
             });
-          }
-          origin = addVec2(origin, contribution);
+          origin = [origin[0] + contribution[0], origin[1] + contribution[1]];
         });
         drawVector(ctx, viewport, origin, {
           color: palette.red,
@@ -224,9 +263,9 @@ export function SpanScene({ theme }: SceneProps) {
           width: 2.8,
         });
       }
-
       if (state.showTarget) {
-        drawVector(ctx, viewport, state.target, {
+        const target = asCanvasVector(state.target, state.dimension);
+        drawVector(ctx, viewport, target, {
           color: palette.neutral,
           label: "目标",
           width: 1.8,
@@ -235,7 +274,7 @@ export function SpanScene({ theme }: SceneProps) {
         drawPoint(
           ctx,
           viewport,
-          state.target,
+          target,
           palette.neutral,
           4,
           true,
@@ -248,43 +287,50 @@ export function SpanScene({ theme }: SceneProps) {
 
   const onPointerDown = useCallback(
     (event: VisualizationPointerEvent) => {
-      const vectorIndex = state.vectors.findIndex((point) =>
-        isWorldPointNearCanvas(point, event.canvas, event.viewport),
+      const index = state.vectors.findIndex((vector) =>
+        isWorldPointNearCanvas(
+          asCanvasVector(vector, state.dimension),
+          event.canvas,
+          event.viewport,
+        ),
       );
-      if (vectorIndex >= 0) {
-        dragging.current = vectorIndex;
+      if (index >= 0) {
+        dragging.current = index;
         return true;
       }
       if (
         state.showTarget &&
-        isWorldPointNearCanvas(state.target, event.canvas, event.viewport)
+        isWorldPointNearCanvas(
+          asCanvasVector(state.target, state.dimension),
+          event.canvas,
+          event.viewport,
+        )
       ) {
         dragging.current = "target";
         return true;
       }
       return false;
     },
-    [state.showTarget, state.target, state.vectors],
+    [state],
   );
-
   const onPointerMove = useCallback(
     (event: VisualizationPointerEvent) => {
       const key = dragging.current;
       if (key === null) return;
+      const next = state.dimension === 1 ? [event.world[0]] : [...event.world];
       setState((current) =>
         key === "target"
-          ? { ...current, target: event.world }
+          ? { ...current, target: next }
           : {
               ...current,
               vectors: current.vectors.map((vector, index) =>
-                index === key ? event.world : vector,
+                index === key ? next : vector,
               ),
             },
       );
     },
-    [setState],
+    [setState, state.dimension],
   );
-
   const stopDragging = useCallback(() => {
     dragging.current = null;
   }, []);
@@ -294,43 +340,38 @@ export function SpanScene({ theme }: SceneProps) {
       ? "—"
       : derived.basisIndices.map(vectorLabel).join(", ");
   const solutionText =
-    derived.targetSolution.kind === "unique"
-      ? `${basisText}: (${formatNumber(derived.targetSolution.solution[0])}, ${formatNumber(derived.targetSolution.solution[1])})`
-      : derived.targetSolution.kind === "infinite"
-        ? "可表示（非唯一）"
-        : "不可表示";
-  const combinationFormula = formatCombination(state.coefficients);
+    derived.targetSolution.kind === "none"
+      ? "不可表示"
+      : `${derived.targetSolution.kind === "unique" ? "唯一" : "可表示（非唯一）"} ${formatRealVector(derived.targetSolution.solution)}`;
+  const fullRank = derived.rank === state.dimension;
 
   return (
     <SceneLayout
       id="span"
       index="01"
       title="向量张成"
-      subtitle={`${state.vectors.length} 个 R² 向量 · 自动提取独立方向`}
+      subtitle={`${state.vectors.length} 个 R${state.dimension} 向量 · 自动提取输入序最大独立子集`}
       formulaLabel="线性组合"
       formula={
         <>
-          {combinationFormula} = {formatVector(derived.combination)}
+          {formatCombination(state.coefficients)} ={" "}
+          {formatRealVector(derived.combination)}
         </>
       }
       formulaStatus={derived.classification}
       formulaTone={
-        derived.rank === 2
-          ? "positive"
-          : derived.rank === 1
-            ? "warning"
-            : "negative"
+        fullRank ? "positive" : derived.rank > 0 ? "warning" : "negative"
       }
       insight={
-        derived.rank === 2 ? (
+        fullRank ? (
           <>
-            <strong>{basisText} 是按输入顺序选出的平面基。</strong>{" "}
-            其余向量不改变张成空间，但会参与当前线性组合。
+            <strong>{basisText} 按输入顺序构成张成空间的一组基。</strong>{" "}
+            其余向量仍参与当前线性组合。
           </>
-        ) : derived.rank === 1 ? (
+        ) : derived.rank > 0 ? (
           <>
-            <strong>当前向量组只提供一个独立方向。</strong>{" "}
-            所有线性组合仍停留在同一直线上。
+            <strong>当前生成组张成 {derived.classification}。</strong>{" "}
+            自动子集无需手动指定，并保持输入顺序。
           </>
         ) : (
           <>
@@ -339,90 +380,117 @@ export function SpanScene({ theme }: SceneProps) {
         )
       }
       stage={
-        <VisualizationStage
-          key={isMobile ? "mobile" : "desktop"}
-          ref={stageRef}
-          render={render}
-          renderKey={state}
-          viewport={{
-            scale: isMobile ? 50 : 66,
-            center: isMobile ? [0, 0.55] : [0, 0],
-          }}
-          duration={1250}
-          ariaLabel={`${state.vectors.length} 个向量逐步张成原点、直线或平面并形成线性组合`}
-          fallbackDescription={`${state.vectors.map(formatVector).join("、")} 的张成空间是${derived.classification}；自动基为 ${basisText}。`}
-          showExportButton
-          exportFilename="basis-lab-span.png"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={stopDragging}
-          onPointerCancel={stopDragging}
-        />
+        <div className="dimension-stage">
+          {usesThree ? (
+            <Suspense
+              fallback={
+                <div className="stage-loading" role="status">
+                  正在加载三维张成舞台…
+                </div>
+              }
+            >
+              <ThreeSpanStage
+                ref={threeStageRef}
+                vectors={state.vectors}
+                coefficients={state.coefficients}
+                basisIndices={derived.basisIndices}
+                rank={derived.rank}
+                target={state.target}
+                showTarget={state.showTarget}
+                theme={theme}
+                exportFilename="basis-lab-span-3d.png"
+              />
+            </Suspense>
+          ) : (
+            <VisualizationStage
+              key={`${isMobile ? "mobile" : "desktop"}-${state.dimension}`}
+              ref={stageRef}
+              render={render}
+              renderKey={state}
+              viewport={{
+                scale: isMobile ? 50 : 66,
+                center: isMobile ? [0, 0.55] : [0, 0],
+              }}
+              duration={1250}
+              ariaLabel={`${state.vectors.length} 个 R${state.dimension} 向量张成${derived.classification}`}
+              fallbackDescription={`${state.vectors.map(formatRealVector).join("、")} 的张成空间是${derived.classification}；自动基为 ${basisText}。`}
+              showExportButton
+              exportFilename="basis-lab-span.png"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={stopDragging}
+              onPointerCancel={stopDragging}
+            />
+          )}
+        </div>
       }
       inspector={
         <>
           <ControlSection
             title="生成向量组"
-            caption="端点可在画布中拖动；基向量按输入顺序稳定选取"
+            caption={
+              usesThree
+                ? "三维舞台支持环绕观察；独立子集按输入顺序稳定选取"
+                : "端点可在画布中拖动；独立子集按输入顺序稳定选取"
+            }
             action={
               <IconButton
                 label="恢复默认向量组"
                 onClick={() => {
                   resetState();
-                  window.setTimeout(() => stageRef.current?.replay(), 0);
+                  setTimeout(replay, 0);
                 }}
               >
                 <RotateCcw size={15} />
               </IconButton>
             }
           >
-            <SelectField
-              label="向量数量"
-              value={String(state.vectors.length) as `${SpanVectorCount}`}
-              options={countOptions}
-              onChange={(value) => {
-                stopDragging();
-                setState((current) =>
-                  resizeSpanState(current, Number(value) as SpanVectorCount),
-                );
-              }}
-            />
+            <div className="dimension-row">
+              <SelectField
+                label="空间"
+                value={String(state.dimension) as `${Dimension}`}
+                options={dimensionOptions}
+                onChange={(value) => {
+                  stopDragging();
+                  setState((current) =>
+                    resizeSpanDimension(current, Number(value) as Dimension),
+                  );
+                }}
+              />
+              <SelectField
+                label="向量数量"
+                value={String(state.vectors.length) as `${SpanVectorCount}`}
+                options={countOptions}
+                onChange={(value) => {
+                  stopDragging();
+                  setState((current) =>
+                    resizeSpanState(current, Number(value) as SpanVectorCount),
+                  );
+                }}
+              />
+            </div>
             {state.vectors.map((vector, index) => (
-              <VectorInput
+              <DynamicVectorInput
                 key={index}
                 label={vectorLabel(index)}
                 name={`vector-${index + 1}`}
                 tone={vectorTone(index)}
-                value={vector}
+                value={{ dimension: state.dimension, entries: vector }}
                 onChange={(next) =>
                   setState((current) => ({
                     ...current,
                     vectors: current.vectors.map((entry, vectorIndex) =>
-                      vectorIndex === index ? next : entry,
+                      vectorIndex === index ? next.entries : entry,
                     ),
                   }))
                 }
               />
             ))}
-            <PresetGrid
-              label="张成空间预设"
-              presets={spanPresets.map((preset) => ({
-                label: preset.label,
-                value: preset,
-              }))}
-              onSelect={(preset) => {
-                stopDragging();
-                setState((current) => ({
-                  ...current,
-                  vectors: preset.vectors.map((vector) => [...vector] as Vec2),
-                  coefficients: [...preset.coefficients],
-                }));
-                window.setTimeout(() => stageRef.current?.replay(), 0);
-              }}
-            />
           </ControlSection>
-
-          <ControlSection title="组合系数" caption="每个系数与同序号向量配对">
+          <ControlSection
+            title="组合与目标"
+            caption="所有生成向量及其同序号系数都参与求和"
+          >
             {state.coefficients.map((coefficient, index) => (
               <RangeField
                 key={index}
@@ -443,23 +511,25 @@ export function SpanScene({ theme }: SceneProps) {
                 }
               />
             ))}
-            <VectorInput
+            <DynamicVectorInput
               label="目标"
               name="target"
               tone="blue"
-              value={state.target}
+              value={{ dimension: state.dimension, entries: state.target }}
               onChange={(target) =>
-                setState((current) => ({ ...current, target }))
+                setState((current) => ({ ...current, target: target.entries }))
               }
             />
             <div className="toggle-grid">
-              <Toggle
-                label="系数格"
-                checked={state.showLattice}
-                onChange={(showLattice) =>
-                  setState((current) => ({ ...current, showLattice }))
-                }
-              />
+              {state.dimension === 2 && (
+                <Toggle
+                  label="系数格"
+                  checked={state.showLattice}
+                  onChange={(showLattice) =>
+                    setState((current) => ({ ...current, showLattice }))
+                  }
+                />
+              )}
               <Toggle
                 label="目标向量"
                 checked={state.showTarget}
@@ -469,7 +539,6 @@ export function SpanScene({ theme }: SceneProps) {
               />
             </div>
           </ControlSection>
-
           <ControlSection title="空间读数">
             <MetricList
               metrics={[
@@ -477,17 +546,20 @@ export function SpanScene({ theme }: SceneProps) {
                   label: "rank",
                   value: String(derived.rank),
                   key: "rank",
-                  tone: derived.rank === 2 ? "cyan" : "red",
+                  tone: fullRank ? "cyan" : "red",
                 },
                 {
-                  label: "自动基",
+                  label: "自动独立子集",
                   value: basisText,
                   key: "basis-indices",
                   tone: "cyan",
                 },
                 {
-                  label: "det[basis]",
-                  value: formatNumber(derived.determinant),
+                  label: `det[basis]`,
+                  value:
+                    derived.determinant === null
+                      ? "—"
+                      : formatNumber(derived.determinant),
                   key: "determinant",
                 },
                 {
@@ -497,19 +569,21 @@ export function SpanScene({ theme }: SceneProps) {
                   tone: "yellow",
                 },
                 {
-                  label: "target coords",
+                  label: "target membership",
                   value: solutionText,
                   key: "target-coordinates",
-                  tone: "blue",
+                  tone: derived.targetInSpan ? "blue" : "red",
                 },
               ]}
             />
-            {derived.rank === 2 ? (
+            {fullRank ? (
               <Notice tone="success">
-                自动选出的 {basisText} 构成 R² 的一组基。
+                自动选出的 {basisText} 张成整个 R{state.dimension}。
               </Notice>
             ) : (
-              <Notice tone="warning">当前向量组不是 R² 的基。</Notice>
+              <Notice tone="warning">
+                当前生成组未张成整个 R{state.dimension}。
+              </Notice>
             )}
           </ControlSection>
         </>

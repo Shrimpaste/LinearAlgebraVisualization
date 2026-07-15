@@ -18,7 +18,7 @@ export type TransformDirection = "forward" | "inverse";
 export type TransformMode = "single" | "composition";
 
 export interface TransformState {
-  readonly version: 3;
+  readonly version: 4;
   readonly rows: Dimension;
   readonly columns: Dimension;
   readonly matrix: RealMatrix;
@@ -26,6 +26,8 @@ export interface TransformState {
   readonly secondMatrix: RealMatrix;
   readonly vector: RealVector;
   readonly basisMode: BasisMode;
+  /** For square maps, identifies W with V and uses the ordered domain basis in both spaces. */
+  readonly sharedBasis: boolean;
   readonly domainBasis: RealMatrix;
   readonly codomainBasis: RealMatrix;
   readonly direction: TransformDirection;
@@ -35,7 +37,7 @@ export interface TransformState {
 }
 
 export const transformDefaults: TransformState = {
-  version: 3,
+  version: 4,
   rows: 2,
   columns: 2,
   matrix: [
@@ -49,6 +51,7 @@ export const transformDefaults: TransformState = {
   ],
   vector: [1.5, 1],
   basisMode: "standard",
+  sharedBasis: false,
   domainBasis: identityRealMatrix(2),
   codomainBasis: identityRealMatrix(2),
   direction: "forward",
@@ -123,18 +126,20 @@ export function migrateTransformState(stored: unknown): TransformState {
     record.version !== undefined &&
     record.version !== 1 &&
     record.version !== 2 &&
-    record.version !== 3
+    record.version !== 3 &&
+    record.version !== 4
   ) {
     return transformDefaults;
   }
 
-  if (record.version !== 2 && record.version !== 3) {
+  if (record.version !== 2 && record.version !== 3 && record.version !== 4) {
     const basis = legacyBasisMatrix(record.basis);
     return {
       ...transformDefaults,
       matrix: legacyMatrix(record.matrix),
       vector: coerceVector(record.vector, 2, transformDefaults.vector),
       basisMode: record.basisMode === "custom" ? "custom" : "standard",
+      sharedBasis: record.basisMode === "custom",
       domainBasis: basis,
       codomainBasis: basis,
       showGrid:
@@ -156,11 +161,11 @@ export function migrateTransformState(stored: unknown): TransformState {
   const columns = safeDimension(record.columns, 2);
   const matrixFallback = rectangularIdentity(rows, columns);
   const mode =
-    record.version === 3 && record.mode === "composition" && rows === columns
+    record.version !== 2 && record.mode === "composition" && rows === columns
       ? "composition"
       : "single";
   return {
-    version: 3,
+    version: 4,
     rows,
     columns,
     matrix: coerceMatrix(record.matrix, rows, columns, matrixFallback),
@@ -173,6 +178,13 @@ export function migrateTransformState(stored: unknown): TransformState {
     ),
     vector: coerceVector(record.vector, columns, [1.5, 1, 0.5]),
     basisMode: record.basisMode === "custom" ? "custom" : "standard",
+    sharedBasis:
+      rows === columns &&
+      (record.version === 4
+        ? record.sharedBasis === true
+        : record.basisMode === "custom" &&
+          JSON.stringify(record.domainBasis) ===
+            JSON.stringify(record.codomainBasis)),
     domainBasis: coerceMatrix(
       record.domainBasis,
       columns,
@@ -247,6 +259,7 @@ export function resizeTransformState(
     ),
     domainBasis: resizeWithIdentity(state.domainBasis, columns, columns),
     codomainBasis: resizeWithIdentity(state.codomainBasis, rows, rows),
+    sharedBasis: rows === columns ? state.sharedBasis : false,
     direction:
       rows === columns && state.direction === "inverse" ? "inverse" : "forward",
   };
@@ -306,14 +319,88 @@ export function transformPresetsForShape(rows: Dimension, columns: Dimension) {
   ] as const;
 }
 
+export function changeTransformBasisMode(
+  state: TransformState,
+  basisMode: BasisMode,
+): TransformState {
+  if (basisMode === state.basisMode) return state;
+
+  const domainBasis = state.domainBasis;
+  const codomainBasis =
+    state.sharedBasis && state.rows === state.columns
+      ? domainBasis
+      : state.codomainBasis;
+  const inverseDomain = inverseRealMatrix(domainBasis);
+  const inverseCodomain = inverseRealMatrix(codomainBasis);
+  if (!inverseDomain || !inverseCodomain) return state;
+
+  const convert = (matrix: RealMatrix) =>
+    basisMode === "custom"
+      ? multiplyRealMatrices(
+          multiplyRealMatrices(inverseCodomain, matrix),
+          domainBasis,
+        )
+      : multiplyRealMatrices(
+          multiplyRealMatrices(codomainBasis, matrix),
+          inverseDomain,
+        );
+
+  return {
+    ...state,
+    basisMode,
+    codomainBasis,
+    matrix: convert(state.matrix),
+    secondMatrix: convert(state.secondMatrix),
+  };
+}
+
+export function changeTransformSharedBasis(
+  state: TransformState,
+  sharedBasis: boolean,
+): TransformState {
+  if (
+    sharedBasis === state.sharedBasis ||
+    state.rows !== state.columns ||
+    state.basisMode !== "custom"
+  ) {
+    return state.rows === state.columns
+      ? { ...state, sharedBasis }
+      : { ...state, sharedBasis: false };
+  }
+
+  const oldCodomain = state.sharedBasis
+    ? state.domainBasis
+    : state.codomainBasis;
+  const newCodomain = sharedBasis ? state.domainBasis : state.codomainBasis;
+  const inverseNewCodomain = inverseRealMatrix(newCodomain);
+  if (!inverseNewCodomain || !analyzeRealBasis(oldCodomain).isBasis)
+    return state;
+  const convert = (matrix: RealMatrix) =>
+    multiplyRealMatrices(
+      multiplyRealMatrices(inverseNewCodomain, oldCodomain),
+      matrix,
+    );
+
+  return {
+    ...state,
+    sharedBasis,
+    matrix: convert(state.matrix),
+    secondMatrix: convert(state.secondMatrix),
+  };
+}
+
 export function deriveTransform(state: TransformState) {
   const domainBasis =
     state.basisMode === "custom"
       ? state.domainBasis
       : identityRealMatrix(state.columns);
+  const configuredCodomainBasis =
+    state.sharedBasis && state.rows === state.columns
+      ? state.domainBasis
+      : state.codomainBasis;
   const codomainBasis =
     state.basisMode === "custom"
-      ? state.codomainBasis
+      ? configuredCodomainBasis
       : identityRealMatrix(state.rows);
   const domainBasisAnalysis = analyzeRealBasis(domainBasis);
   const codomainBasisAnalysis = analyzeRealBasis(codomainBasis);

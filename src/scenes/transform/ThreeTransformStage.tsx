@@ -30,6 +30,8 @@ export interface ThreeTransformStageHandle {
 export interface ThreeTransformStageProps {
   matrix: RealMatrix;
   intermediateMatrix?: RealMatrix | null;
+  basisVectors?: RealMatrix | null;
+  basisPath?: string;
   vector: RealVector;
   inputDimension: Dimension;
   outputDimension: Dimension;
@@ -437,6 +439,7 @@ function buildContent(
   matrix: RealMatrix,
   intermediateMatrix: RealMatrix | null,
   vector: RealVector,
+  basisVectors: RealMatrix | null,
   inputDimension: Dimension,
   outputDimension: Dimension,
   palette: CanvasPalette,
@@ -525,12 +528,19 @@ function buildContent(
 
   const basisColors = [palette.cyan, palette.yellow, palette.blue] as const;
   for (let index = 0; index < inputDimension; index += 1) {
-    const basis = new THREE.Vector3().setComponent(index, 1);
+    const basis = basisVectors
+      ? embedVector(
+          Array.from(
+            { length: inputDimension },
+            (_, row) => basisVectors[row]?.[index] ?? 0,
+          ),
+        )
+      : new THREE.Vector3().setComponent(index, 1);
     const arrow = createArrow(
       basis,
       applyMatrix(matrix, basis, inputDimension, outputDimension),
       basisColors[index]!,
-      `b${index + 1}`,
+      `v${index + 1}`,
       intermediateMatrix
         ? applyMatrix(
             intermediateMatrix,
@@ -719,6 +729,8 @@ export const ThreeTransformStage = forwardRef<
   {
     matrix,
     intermediateMatrix = null,
+    basisVectors = null,
+    basisPath = "standard",
     vector,
     inputDimension,
     outputDimension,
@@ -995,6 +1007,7 @@ export const ThreeTransformStage = forwardRef<
         matrix,
         intermediateMatrix,
         vector,
+        basisVectors,
         inputDimension,
         outputDimension,
         palette,
@@ -1004,6 +1017,7 @@ export const ThreeTransformStage = forwardRef<
       );
       runtime.scene.add(content.root);
       contentRef.current = content;
+      runtime.renderer.domElement.dataset.transformBasisPath = basisPath;
 
       const visibleDimension = Math.max(
         inputDimension,
@@ -1025,6 +1039,8 @@ export const ThreeTransformStage = forwardRef<
       );
     }
   }, [
+    basisPath,
+    basisVectors,
     inputDimension,
     intermediateMatrix,
     matrix,
