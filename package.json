@@ -1,7 +1,7 @@
 {
   "name": "basis-lab",
   "private": true,
-  "version": "1.2.0-beta.2",
+  "version": "1.2.0-beta.3",
   "description": "A production-grade interactive 1-3D real and complex linear algebra visualization workbench.",
   "license": "MIT",
   "repository": {

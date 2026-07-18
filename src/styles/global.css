@@ -993,6 +993,120 @@ select:disabled {
   min-height: 0;
 }
 
+.operator-stage-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--canvas);
+}
+
+.operator-stage-shell__viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.operator-stage-shell__viewport > section,
+.operator-stage-shell__viewport > .visualization-stage__fallback {
+  width: 100%;
+  height: 100%;
+}
+
+.operator-lesson-rail {
+  z-index: 4;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper-raised) 94%, transparent);
+}
+
+.operator-lesson-rail > .icon-button {
+  width: 42px;
+  height: 100%;
+  min-height: 54px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.operator-lesson-rail__steps {
+  display: grid;
+  grid-template-columns: repeat(
+    var(--operator-step-count, 5),
+    minmax(86px, 1fr)
+  );
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.operator-lesson-rail__steps button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 7px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 7px 9px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.operator-lesson-rail__steps button:last-child {
+  border-right: 1px solid var(--line);
+}
+
+.operator-lesson-rail__steps button:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--cyan) 5%, transparent);
+}
+
+.operator-lesson-rail__steps button[aria-selected="true"] {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--cyan) 9%, transparent);
+  box-shadow: inset 0 -2px 0 var(--cyan);
+}
+
+.operator-lesson-rail__steps button > span {
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--ink-faint);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.operator-lesson-rail__steps strong,
+.operator-lesson-rail__steps small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operator-lesson-rail__steps strong {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.operator-lesson-rail__steps small {
+  color: var(--ink-faint);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 8px;
+}
+
 .operator-control-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(104px, 0.72fr);
@@ -1023,18 +1137,149 @@ select:disabled {
 }
 
 .operator-spectrum__factor {
+  display: grid;
+  gap: 12px;
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--paper-raised) 70%, transparent);
-  overflow-x: auto;
-  scrollbar-color: var(--line-strong) transparent;
-  scrollbar-width: thin;
 }
 
-.operator-spectrum__factor .matrix-editor {
-  width: 100%;
+.operator-eigenspace-list {
+  display: grid;
   min-width: 0;
+  border-top: 1px solid var(--line);
+}
+
+.operator-eigenspace-list > div {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.operator-eigenspace-list span,
+.operator-eigenspace-list small {
+  color: var(--ink-faint);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.operator-eigenspace-list strong {
+  min-width: 0;
+  overflow: hidden;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operator-math-matrix {
+  display: grid;
+  grid-template-columns: auto 6px minmax(0, 1fr) 6px;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+}
+
+.operator-math-matrix figcaption {
+  align-self: center;
+  color: var(--ink-soft);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+}
+
+.operator-math-matrix__grid {
+  display: grid;
+  align-items: center;
+  gap: 5px 7px;
+  min-width: 0;
+  padding: 3px 0;
+}
+
+.operator-math-matrix__grid span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operator-math-matrix__bracket {
+  border-top: 1px solid var(--ink-faint);
+  border-bottom: 1px solid var(--ink-faint);
+  border-left: 1px solid var(--ink-faint);
+}
+
+.operator-math-matrix__bracket--right {
+  border-right: 1px solid var(--ink-faint);
+  border-left: 0;
+}
+
+.three-operator-stage {
+  background: var(--canvas);
+}
+
+.three-operator-stage__canvas {
+  outline: 0;
+  touch-action: none;
+}
+
+.three-operator-stage__canvas:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+.three-operator-stage__legend {
+  position: absolute;
+  left: 12px;
+  top: 11px;
+  z-index: 6;
+  display: grid;
+  gap: 3px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--cyan);
+  background: color-mix(in srgb, var(--canvas) 82%, transparent);
+  pointer-events: none;
+}
+
+.three-operator-stage__legend span {
+  color: var(--ink-faint);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 8px;
+}
+
+.three-operator-stage__legend strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.three-operator-stage__component-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 3px;
+}
+
+.three-operator-stage__component-key span {
+  color: var(--cyan);
+  font-size: 9px;
+}
+
+.three-operator-stage__component-key span[data-component="2"] {
+  color: var(--yellow);
+}
+
+.three-operator-stage__component-key span[data-component="3"] {
+  color: var(--blue);
 }
 
 .operator-spectrum__repeated {
@@ -1521,6 +1766,28 @@ select:disabled {
     gap: 7px;
     padding: 5px 8px;
   }
+
+  .operator-lesson-rail__steps {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(118px, 1fr);
+    grid-template-columns: none !important;
+  }
+
+  .operator-lesson-rail__steps button {
+    min-height: 60px;
+  }
+
+  .operator-stage-shell__viewport {
+    min-height: 360px;
+  }
+
+  .operator-eigenspace-list > div {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .operator-eigenspace-list small {
+    grid-column: 2;
+  }
 }
 
 @media (max-width: 420px) {
@@ -1555,6 +1822,22 @@ select:disabled {
 
   .operation-row {
     grid-template-columns: 1fr;
+  }
+
+  .operator-lesson-rail > .icon-button {
+    width: 40px;
+  }
+
+  .operator-control-row {
+    grid-template-columns: 1fr;
+  }
+
+  .operator-math-matrix__grid {
+    gap: 4px;
+  }
+
+  .operator-math-matrix__grid span {
+    font-size: 8px;
   }
 }
 

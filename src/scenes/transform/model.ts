@@ -18,7 +18,7 @@ export type TransformDirection = "forward" | "inverse";
 export type TransformMode = "single" | "composition";
 
 export interface TransformState {
-  readonly version: 4;
+  readonly version: 5;
   readonly rows: Dimension;
   readonly columns: Dimension;
   readonly matrix: RealMatrix;
@@ -34,10 +34,11 @@ export interface TransformState {
   readonly showGrid: boolean;
   readonly showSphere: boolean;
   readonly showTrail: boolean;
+  readonly showBasisImages: boolean;
 }
 
 export const transformDefaults: TransformState = {
-  version: 4,
+  version: 5,
   rows: 2,
   columns: 2,
   matrix: [
@@ -58,6 +59,7 @@ export const transformDefaults: TransformState = {
   showGrid: true,
   showSphere: true,
   showTrail: true,
+  showBasisImages: true,
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -127,12 +129,18 @@ export function migrateTransformState(stored: unknown): TransformState {
     record.version !== 1 &&
     record.version !== 2 &&
     record.version !== 3 &&
-    record.version !== 4
+    record.version !== 4 &&
+    record.version !== 5
   ) {
     return transformDefaults;
   }
 
-  if (record.version !== 2 && record.version !== 3 && record.version !== 4) {
+  if (
+    record.version !== 2 &&
+    record.version !== 3 &&
+    record.version !== 4 &&
+    record.version !== 5
+  ) {
     const basis = legacyBasisMatrix(record.basis);
     return {
       ...transformDefaults,
@@ -165,7 +173,7 @@ export function migrateTransformState(stored: unknown): TransformState {
       ? "composition"
       : "single";
   return {
-    version: 4,
+    version: 5,
     rows,
     columns,
     matrix: coerceMatrix(record.matrix, rows, columns, matrixFallback),
@@ -180,7 +188,7 @@ export function migrateTransformState(stored: unknown): TransformState {
     basisMode: record.basisMode === "custom" ? "custom" : "standard",
     sharedBasis:
       rows === columns &&
-      (record.version === 4
+      (record.version === 4 || record.version === 5
         ? record.sharedBasis === true
         : record.basisMode === "custom" &&
           JSON.stringify(record.domainBasis) ===
@@ -213,6 +221,10 @@ export function migrateTransformState(stored: unknown): TransformState {
       typeof record.showTrail === "boolean"
         ? record.showTrail
         : transformDefaults.showTrail,
+    showBasisImages:
+      typeof record.showBasisImages === "boolean"
+        ? record.showBasisImages
+        : transformDefaults.showBasisImages,
   };
 }
 
