@@ -25,7 +25,7 @@ describe("dimension-generic transform scene model", () => {
     });
 
     expect(migrated).toMatchObject({
-      version: 4,
+      version: 5,
       rows: 2,
       columns: 2,
       matrix: [
@@ -43,9 +43,17 @@ describe("dimension-generic transform scene model", () => {
       ],
       showGrid: false,
       showSphere: false,
+      showBasisImages: true,
       mode: "single",
     });
-    expect(migrateTransformState({ version: 5, rows: 3 })).toBe(
+    expect(
+      migrateTransformState({
+        ...transformDefaults,
+        version: 4,
+        showBasisImages: false,
+      }).showBasisImages,
+    ).toBe(false);
+    expect(migrateTransformState({ version: 6, rows: 3 })).toBe(
       transformDefaults,
     );
   });
@@ -259,7 +267,7 @@ describe("dimension-generic transform scene model", () => {
   it("persists shared same-space basis semantics and rejects invalid conversion atomically", () => {
     const shared = migrateTransformState({
       ...transformDefaults,
-      version: 4,
+      version: 5,
       basisMode: "custom",
       sharedBasis: true,
       domainBasis: [

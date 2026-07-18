@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { RotateCcw } from "lucide-react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 import type { SceneProps } from "../../app/types";
 import { SceneLayout } from "../../components/SceneLayout";
 import {
@@ -11,11 +19,19 @@ import {
   ComplexMatrixInput,
   type ComplexMatrixValue,
 } from "../../components/ui/ComplexMatrixInput";
+import {
+  ComplexVectorInput,
+  type ComplexVectorValue,
+} from "../../components/ui/ComplexVectorInput";
 import { ControlSection } from "../../components/ui/ControlSection";
 import {
   DynamicMatrixInput,
   type DynamicMatrixValue,
 } from "../../components/ui/DynamicMatrixInput";
+import {
+  DynamicVectorInput,
+  type DynamicVectorValue,
+} from "../../components/ui/DynamicVectorInput";
 import { IconButton } from "../../components/ui/IconButton";
 import { MetricList } from "../../components/ui/MetricList";
 import { Notice } from "../../components/ui/Notice";
@@ -24,17 +40,15 @@ import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SelectField } from "../../components/ui/SelectField";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
-  absComplex,
   type ComplexMatrix,
-  type ComplexScalar,
+  type ComplexOperatorClassification,
+  type ComplexVector,
   type Dimension,
   type Field,
-  type NormalSpectralSuccess,
 } from "../../math/nd";
-import { getCanvasPalette } from "../../rendering";
-import { formatNumber } from "../../utils/format";
 import { formatComplex } from "../../utils/formatLinear";
-import { compactOperatorDisplayMatrix } from "./display";
+import { ReadonlyComplexMatrix } from "./ReadonlyComplexMatrix";
+import { renderOperatorCanvas } from "./renderCanvas";
 import {
   applyOperatorPreset,
   changeOperatorField,
@@ -43,8 +57,25 @@ import {
   operatorDefaults,
   operatorPresetsForDimension,
   resizeOperatorState,
+  type OperatorComponentFocus,
+  type OperatorLessonMode,
   type OperatorPreset,
 } from "./model";
+import type { ThreeOperatorStageHandle } from "./ThreeOperatorStage";
+
+const ThreeOperatorStage = lazy(() =>
+  import("./ThreeOperatorStage").then((module) => ({
+    default: module.ThreeOperatorStage,
+  })),
+);
+
+type ResultView = "spectrum" | "factor" | "certificate";
+
+interface LessonStep {
+  readonly label: string;
+  readonly formula: string;
+  readonly progress: number;
+}
 
 const dimensionOptions = [
   { value: "1", label: "1 维" },
@@ -56,6 +87,32 @@ const fieldOptions = [
   { value: "R", label: "实数 R" },
   { value: "C", label: "复数 C" },
 ] as const;
+
+const lessonModeOptions = [
+  { value: "apply", label: "作用于向量" },
+  { value: "structure", label: "查看谱结构" },
+] as const;
+
+const resultViewOptions = [
+  { value: "spectrum", label: "特征值" },
+  { value: "factor", label: "U / Λ" },
+  { value: "certificate", label: "验证" },
+] as const;
+
+const applySteps: readonly LessonStep[] = [
+  { label: "输入", formula: "x", progress: 0 },
+  { label: "谱坐标", formula: "c = U*x", progress: 0.25 },
+  { label: "独立作用", formula: "d = Λc", progress: 0.5 },
+  { label: "贡献重构", formula: "Ud = Σdᵢuᵢ", progress: 0.75 },
+  { label: "结果", formula: "Ax", progress: 1 },
+];
+
+const structureSteps: readonly LessonStep[] = [
+  { label: "谱点", formula: "σ(A)", progress: 0 },
+  { label: "特征子空间", formula: "Auᵢ = λᵢuᵢ", progress: 1 / 3 },
+  { label: "谱投影", formula: "Pλ", progress: 2 / 3 },
+  { label: "恒等式", formula: "A = ΣλPλ", progress: 1 },
+];
 
 function toDimension(value: "1" | "2" | "3"): Dimension {
   return Number(value) as Dimension;
@@ -98,348 +155,54 @@ function toComplexMatrixInput(
 function fromComplexMatrixInput(value: ComplexMatrixValue): ComplexMatrix {
   return Array.from({ length: value.rows }, (_, row) =>
     Array.from({ length: value.columns }, (_, column) => {
-      const entry = value.entries[row * value.columns + column];
-      return { re: entry?.real ?? 0, im: entry?.imag ?? 0 };
+      const entry = value.entries[row * value.columns + column] ?? {
+        real: 0,
+        imag: 0,
+      };
+      return { re: entry.real, im: entry.imag };
     }),
   );
 }
 
+function toRealVectorInput(
+  vector: ComplexVector,
+  dimension: Dimension,
+): DynamicVectorValue {
+  return { dimension, entries: vector.map((entry) => entry.re) };
+}
+
+function fromRealVectorInput(value: DynamicVectorValue): ComplexVector {
+  return value.entries.map((entry) => ({ re: entry, im: 0 }));
+}
+
+function toComplexVectorInput(
+  vector: ComplexVector,
+  dimension: Dimension,
+): ComplexVectorValue {
+  return {
+    dimension,
+    entries: vector.map((entry) => ({ real: entry.re, imag: entry.im })),
+  };
+}
+
+function fromComplexVectorInput(value: ComplexVectorValue): ComplexVector {
+  return value.entries.map((entry) => ({ re: entry.real, im: entry.imag }));
+}
+
+function classificationLabel(classification: ComplexOperatorClassification) {
+  if (classification.selfAdjoint) return "self-adjoint";
+  return classification.normal ? "normal" : "非 normal";
+}
+
 function formatResidual(value: number | undefined) {
   if (value === undefined) return "—";
-  if (value === 0) return "0";
-  return value < 1e-5 ? value.toExponential(2) : formatNumber(value);
+  if (Math.abs(value) < 1e-12) return "0";
+  if (Math.abs(value) < 1e-4) return value.toExponential(2);
+  return value.toFixed(3).replace(/\.0+$/, "");
 }
 
-function classificationLabel(
-  classification: ReturnType<typeof deriveOperator>["classification"],
-) {
-  if (classification.selfAdjoint) return "self-adjoint";
-  if (classification.normal) return "normal";
-  return "非 normal";
-}
-
-function clamp01(value: number) {
-  return Math.min(1, Math.max(0, value));
-}
-
-function drawCanvasArrow(
-  context: CanvasRenderingContext2D,
-  fromX: number,
-  fromY: number,
-  toX: number,
-  toY: number,
-  color: string,
-  alpha: number,
-  width = 2,
-) {
-  const angle = Math.atan2(toY - fromY, toX - fromX);
-  context.save();
-  context.globalAlpha = alpha;
-  context.strokeStyle = color;
-  context.fillStyle = color;
-  context.lineWidth = width;
-  context.lineCap = "round";
-  context.beginPath();
-  context.moveTo(fromX, fromY);
-  context.lineTo(toX, toY);
-  context.stroke();
-  context.beginPath();
-  context.moveTo(toX, toY);
-  context.lineTo(
-    toX - 8 * Math.cos(angle - Math.PI / 6),
-    toY - 8 * Math.sin(angle - Math.PI / 6),
-  );
-  context.lineTo(
-    toX - 8 * Math.cos(angle + Math.PI / 6),
-    toY - 8 * Math.sin(angle + Math.PI / 6),
-  );
-  context.closePath();
-  context.fill();
-  context.restore();
-}
-
-function drawProgressLine(
-  context: CanvasRenderingContext2D,
-  fromX: number,
-  toX: number,
-  y: number,
-  progress: number,
-  color: string,
-) {
-  context.save();
-  context.strokeStyle = color;
-  context.lineWidth = 1.5;
-  context.setLineDash([5, 4]);
-  context.beginPath();
-  context.moveTo(fromX, y);
-  context.lineTo(fromX + (toX - fromX) * clamp01(progress), y);
-  context.stroke();
-  context.restore();
-}
-
-function spectralColumn(result: NormalSpectralSuccess, column: number) {
-  return result.U.map((row) => row[column]!);
-}
-
-function drawProjectionGlyph(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  vector: readonly ComplexScalar[],
-  realGeometry: boolean,
-  color: string,
-  secondary: string,
-  alpha: number,
-) {
-  context.save();
-  context.globalAlpha = alpha;
-  if (realGeometry && vector.length <= 2) {
-    const dx = (vector[0]?.re ?? 1) * 24;
-    const dy = -(vector[1]?.re ?? 0) * 24;
-    drawCanvasArrow(context, x, y, x + dx, y + dy, color, 1, 2.2);
-  } else {
-    const colors = [color, secondary, "#856000"];
-    vector.forEach((entry, index) => {
-      const magnitude = Math.min(1, absComplex(entry));
-      const angle = Math.atan2(entry.im, entry.re);
-      const radius = 7 + magnitude * 18;
-      context.strokeStyle = colors[index] ?? color;
-      context.lineWidth = 2;
-      context.beginPath();
-      context.moveTo(x, y);
-      context.lineTo(
-        x + Math.cos(angle) * radius,
-        y - Math.sin(angle) * radius,
-      );
-      context.stroke();
-      context.fillStyle = colors[index] ?? color;
-      context.beginPath();
-      context.arc(
-        x + Math.cos(angle) * radius,
-        y - Math.sin(angle) * radius,
-        2.5,
-        0,
-        Math.PI * 2,
-      );
-      context.fill();
-    });
-  }
-  context.fillStyle = color;
-  context.beginPath();
-  context.arc(x, y, 3.5, 0, Math.PI * 2);
-  context.fill();
-  context.restore();
-}
-
-function drawEigenvalueGlyph(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  eigenvalue: ComplexScalar,
-  color: string,
-  alpha: number,
-) {
-  const magnitude = absComplex(eigenvalue);
-  const radius = 10 + Math.min(12, magnitude * 3);
-  const phase = Math.atan2(eigenvalue.im, eigenvalue.re);
-  context.save();
-  context.globalAlpha = alpha;
-  context.strokeStyle = color;
-  context.lineWidth = 1.5;
-  context.beginPath();
-  context.arc(x, y, radius, 0, Math.PI * 2);
-  context.stroke();
-  drawCanvasArrow(
-    context,
-    x,
-    y,
-    x + Math.cos(phase) * radius,
-    y - Math.sin(phase) * radius,
-    color,
-    1,
-    1.7,
-  );
-  context.restore();
-}
-
-function renderSpectralPipeline(
-  frame: VisualizationRenderFrame,
-  theme: SceneProps["theme"],
-  field: Field,
-  dimension: Dimension,
-  derived: ReturnType<typeof deriveOperator>,
-) {
-  const palette = getCanvasPalette(theme);
-  const { ctx, width, height, easedProgress } = frame;
-  ctx.fillStyle = palette.background;
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.save();
-  ctx.strokeStyle = palette.gridMinor;
-  ctx.lineWidth = 1;
-  for (let x = 0; x <= width; x += 48) {
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, 0);
-    ctx.lineTo(x + 0.5, height);
-    ctx.stroke();
-  }
-  for (let y = 0; y <= height; y += 48) {
-    ctx.beginPath();
-    ctx.moveTo(0, y + 0.5);
-    ctx.lineTo(width, y + 0.5);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  const projectionIsComplex =
-    field === "C" ||
-    (derived.spectral.success &&
-      (derived.spectral.eigenvalues.some(
-        (value) => Math.abs(value.im) > 1e-8,
-      ) ||
-        derived.spectral.U.some((row) =>
-          row.some((value) => Math.abs(value.im) > 1e-8),
-        )));
-  const projectionLabel = projectionIsComplex
-    ? `C${dimension} 分量/相位投影 · 非完整复空间几何`
-    : dimension === 3
-      ? "R3 分量投影 · 非完整三维几何"
-      : `${dimension}D 特征方向`;
-
-  ctx.fillStyle = palette.textSoft;
-  ctx.font = '10px "IBM Plex Mono", monospace';
-  ctx.textAlign = "left";
-  ctx.fillText(projectionLabel, 16, 23);
-
-  if (!derived.spectral.success) {
-    const isNonNormal = !derived.classification.normal;
-    const centerX = width / 2;
-    const centerY = height / 2;
-    ctx.textAlign = "center";
-    ctx.fillStyle = isNonNormal ? palette.red : palette.yellow;
-    ctx.font = '600 22px "IBM Plex Mono", monospace';
-    ctx.fillText(
-      isNonNormal ? "A*A  ≠  AA*" : "A*A  =  AA*",
-      centerX,
-      centerY - 10,
-    );
-    ctx.fillStyle = palette.text;
-    ctx.font = '500 12px "IBM Plex Sans", sans-serif';
-    ctx.fillText(
-      isNonNormal
-        ? "非 normal：酉谱流水线已停止"
-        : "normal，但数值分解未通过验证",
-      centerX,
-      centerY + 20,
-    );
-    ctx.fillStyle = palette.textSoft;
-    ctx.font = '10px "IBM Plex Mono", monospace';
-    ctx.fillText(
-      `normal residual ${formatResidual(derived.classification.normalResidual)}`,
-      centerX,
-      centerY + 44,
-    );
-    return;
-  }
-
-  const result = derived.spectral;
-  const firstPhase = clamp01(easedProgress * 3);
-  const secondPhase = clamp01(easedProgress * 3 - 1);
-  const thirdPhase = clamp01(easedProgress * 3 - 2);
-  const xInput = width * 0.08;
-  const xProject = width * 0.32;
-  const xLambda = width * 0.62;
-  const xOutput = width * 0.86;
-
-  ctx.textAlign = "center";
-  ctx.fillStyle = palette.text;
-  ctx.font = '600 12px "IBM Plex Mono", monospace';
-  ctx.fillText("v", xInput, 50);
-  ctx.fillText("U*", xProject, 50);
-  ctx.fillText("Λ", xLambda, 50);
-  ctx.fillText("U", xOutput, 50);
-
-  const top = 83;
-  const bottom = Math.max(top, height - 62);
-  const gap = dimension === 1 ? 0 : (bottom - top) / (dimension - 1);
-  result.eigenvalues.forEach((eigenvalue, index) => {
-    const y = dimension === 1 ? (top + bottom) / 2 : top + gap * index;
-    const column = spectralColumn(result, index);
-
-    ctx.fillStyle = palette.neutral;
-    ctx.beginPath();
-    ctx.arc(xInput, y, 4, 0, Math.PI * 2);
-    ctx.fill();
-    drawProgressLine(
-      ctx,
-      xInput + 7,
-      xProject - 28,
-      y,
-      firstPhase,
-      palette.cyan,
-    );
-    drawProjectionGlyph(
-      ctx,
-      xProject,
-      y,
-      column,
-      !projectionIsComplex && dimension <= 2,
-      palette.cyan,
-      palette.blue,
-      0.18 + 0.82 * firstPhase,
-    );
-    drawProgressLine(
-      ctx,
-      xProject + 28,
-      xLambda - 25,
-      y,
-      secondPhase,
-      palette.yellow,
-    );
-    drawEigenvalueGlyph(
-      ctx,
-      xLambda,
-      y,
-      eigenvalue,
-      palette.yellow,
-      0.15 + 0.85 * secondPhase,
-    );
-    drawProgressLine(
-      ctx,
-      xLambda + 25,
-      xOutput - 27,
-      y,
-      thirdPhase,
-      palette.red,
-    );
-    const phase = Math.atan2(eigenvalue.im, eigenvalue.re);
-    const outputLength = 10 + Math.min(22, absComplex(eigenvalue) * 4);
-    drawCanvasArrow(
-      ctx,
-      xOutput - 12,
-      y,
-      xOutput - 12 + Math.cos(phase) * outputLength,
-      y - Math.sin(phase) * outputLength,
-      palette.red,
-      0.12 + 0.88 * thirdPhase,
-      2.2,
-    );
-
-    ctx.textAlign = "center";
-    ctx.font = '10px "IBM Plex Mono", monospace';
-    ctx.fillStyle = palette.cyan;
-    ctx.fillText(`u${index + 1}`, xProject, y + 34);
-    ctx.fillStyle = palette.yellow;
-    ctx.fillText(`λ${index + 1}=${formatComplex(eigenvalue)}`, xLambda, y + 34);
-  });
-
-  ctx.textAlign = "left";
-  ctx.fillStyle = palette.textSoft;
-  ctx.font = '10px "IBM Plex Mono", monospace';
-  const footer = derived.repeated
-    ? "重复特征值：当前酉基仅是该特征子空间中的一种选择"
-    : `reconstruction residual ${formatResidual(result.reconstructionResidual)}`;
-  ctx.fillText(footer, 16, height - 18);
+function vectorText(vector: ComplexVector) {
+  return `[${vector.map(formatComplex).join(", ")}]`;
 }
 
 function failureMessage(
@@ -450,12 +213,67 @@ function failureMessage(
 ) {
   switch (spectral.reason) {
     case "not-normal":
-      return "A*A 与 AA* 不一致，当前算子不存在酉谱分解。";
+      return "A*A 与 AA* 不一致，因此不存在酉谱分解；这不排除一般特征分解。";
     case "verification-failed":
       return "求解结果未通过重构、正交或特征方程残差验证。";
     case "solver-failed":
       return "特征求解器未能给出完整且稳定的酉特征基。";
   }
+}
+
+function LessonRail({
+  steps,
+  active,
+  onSelect,
+}: {
+  readonly steps: readonly LessonStep[];
+  readonly active: number;
+  readonly onSelect: (index: number) => void;
+}) {
+  return (
+    <div
+      className="operator-lesson-rail"
+      role="group"
+      aria-label="谱分解教学步骤"
+    >
+      <IconButton
+        label="上一步"
+        onClick={() => onSelect(Math.max(0, active - 1))}
+        disabled={active === 0}
+      >
+        <ChevronLeft size={17} aria-hidden="true" />
+      </IconButton>
+      <div
+        className="operator-lesson-rail__steps"
+        role="tablist"
+        aria-label="教学阶段"
+        style={{
+          gridTemplateColumns: `repeat(${steps.length}, minmax(86px, 1fr))`,
+        }}
+      >
+        {steps.map((step, index) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={active === index}
+            key={step.label}
+            onClick={() => onSelect(index)}
+          >
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <strong>{step.label}</strong>
+            <small>{step.formula}</small>
+          </button>
+        ))}
+      </div>
+      <IconButton
+        label="下一步"
+        onClick={() => onSelect(Math.min(steps.length - 1, active + 1))}
+        disabled={active === steps.length - 1}
+      >
+        <ChevronRight size={17} aria-hidden="true" />
+      </IconButton>
+    </div>
+  );
 }
 
 export function OperatorScene({ theme }: SceneProps) {
@@ -464,57 +282,128 @@ export function OperatorScene({ theme }: SceneProps) {
     operatorDefaults,
     migrateOperatorState,
   );
-  const stageRef = useRef<VisualizationStageHandle>(null);
+  const [resultView, setResultView] = useState<ResultView>("spectrum");
+  const [activeStep, setActiveStep] = useState(
+    state.lessonMode === "apply"
+      ? applySteps.length - 1
+      : structureSteps.length - 1,
+  );
+  const canvasStageRef = useRef<VisualizationStageHandle>(null);
+  const threeStageRef = useRef<ThreeOperatorStageHandle>(null);
+  const replayTimerRef = useRef<ReturnType<
+    typeof globalThis.setTimeout
+  > | null>(null);
   const derived = useMemo(() => deriveOperator(state), [state]);
   const presets = useMemo(
     () => operatorPresetsForDimension(state.dimension),
     [state.dimension],
   );
+  const steps = state.lessonMode === "apply" ? applySteps : structureSteps;
+  const useThreeStage =
+    state.field === "R" &&
+    state.dimension === 3 &&
+    derived.spectral.success &&
+    Boolean(derived.application);
 
   useEffect(() => {
     if (!derived.spectral.success) {
-      stageRef.current?.pause();
-      stageRef.current?.seek(1);
+      canvasStageRef.current?.pause();
+      canvasStageRef.current?.seek(1);
     }
   }, [derived.spectral.success]);
 
-  const render = useCallback(
-    (frame: VisualizationRenderFrame) =>
-      renderSpectralPipeline(
-        frame,
-        theme,
-        state.field,
-        state.dimension,
-        derived,
-      ),
-    [derived, state.dimension, state.field, theme],
+  useEffect(
+    () => () => {
+      if (replayTimerRef.current !== null) {
+        globalThis.clearTimeout(replayTimerRef.current);
+      }
+    },
+    [],
   );
 
-  const replayIfAvailable = useCallback((nextState: typeof state) => {
+  const render = useCallback(
+    (frame: VisualizationRenderFrame) =>
+      renderOperatorCanvas(frame, theme, state, derived),
+    [derived, state, theme],
+  );
+
+  const replayForState = useCallback((nextState: typeof state) => {
     const next = deriveOperator(nextState);
-    window.setTimeout(() => {
-      if (next.spectral.success) stageRef.current?.replay();
-      else stageRef.current?.seek(1);
-    }, 0);
+    const nextUsesThree =
+      nextState.field === "R" &&
+      nextState.dimension === 3 &&
+      next.spectral.success &&
+      Boolean(next.application);
+    if (replayTimerRef.current !== null) {
+      globalThis.clearTimeout(replayTimerRef.current);
+    }
+    replayTimerRef.current = globalThis.setTimeout(() => {
+      replayTimerRef.current = null;
+      if (!next.spectral.success) canvasStageRef.current?.seek(1);
+      else if (nextUsesThree) threeStageRef.current?.replay();
+      else canvasStageRef.current?.replay();
+    }, 60);
   }, []);
 
   const selectPreset = (preset: OperatorPreset) => {
     const next = applyOperatorPreset(state, preset);
     setState(next);
-    replayIfAvailable(next);
+    setActiveStep(0);
+    replayForState(next);
   };
 
   const setField = (field: Field) => {
     const next = changeOperatorField(state, field);
     setState(next);
-    replayIfAvailable(next);
+    setActiveStep(0);
+    replayForState(next);
   };
 
   const setDimension = (dimension: Dimension) => {
     const next = resizeOperatorState(state, dimension);
     setState(next);
-    replayIfAvailable(next);
+    setActiveStep(0);
+    replayForState(next);
   };
+
+  const setLessonMode = (lessonMode: OperatorLessonMode) => {
+    const next = { ...state, lessonMode };
+    setState(next);
+    setActiveStep(0);
+    replayForState(next);
+  };
+
+  const selectStep = (index: number) => {
+    if (replayTimerRef.current !== null) {
+      globalThis.clearTimeout(replayTimerRef.current);
+      replayTimerRef.current = null;
+    }
+    const bounded = Math.min(steps.length - 1, Math.max(0, index));
+    const progress = steps[bounded]!.progress;
+    setActiveStep(bounded);
+    if (useThreeStage) {
+      threeStageRef.current?.pause();
+      threeStageRef.current?.seek(progress);
+    } else {
+      canvasStageRef.current?.pause();
+      canvasStageRef.current?.seek(progress);
+    }
+  };
+
+  const syncActiveStep = useCallback(
+    (progress: number) => {
+      const count =
+        state.lessonMode === "apply"
+          ? applySteps.length
+          : structureSteps.length;
+      const next = Math.min(
+        count - 1,
+        Math.ceil(progress * (count - 1) - 1e-6),
+      );
+      setActiveStep((current) => (current === next ? current : next));
+    },
+    [state.lessonMode],
+  );
 
   const className = classificationLabel(derived.classification);
   const isNonNormal = !derived.classification.normal;
@@ -524,10 +413,17 @@ export function OperatorScene({ theme }: SceneProps) {
       ? "warning"
       : "negative";
   const formula = derived.spectral.success
-    ? "A = U Λ U*"
+    ? state.lessonMode === "apply"
+      ? "x → U*x → Λc → UΛc = Ax"
+      : "A = Σ λPλ = U Λ U*"
     : derived.classification.normal
       ? "谱分解验证未通过"
       : "A*A ≠ AA*";
+  const subtitle = isNonNormal
+    ? `${state.field}${state.dimension} · 非 normal 交换子诊断`
+    : state.lessonMode === "apply"
+      ? `${state.field}${state.dimension} · 谱分解作用于测试向量`
+      : `${state.field}${state.dimension} · normal 算子的谱结构`;
   const eigenvalues = derived.spectral.success
     ? derived.spectral.eigenvalues.map((value, index) => ({
         label: `λ${index + 1}`,
@@ -536,65 +432,118 @@ export function OperatorScene({ theme }: SceneProps) {
         tone: (["cyan", "yellow", "blue"] as const)[index],
       }))
     : [];
-  const fallbackDescription = derived.spectral.success
-    ? `${state.dimension}维${className}算子，特征值为 ${derived.spectral.eigenvalues.map(formatComplex).join("，")}。`
-    : isNonNormal
-      ? `${state.dimension}维非 normal 算子，不存在 A=UΛU* 酉谱分解。`
-      : `${state.dimension}维 normal 算子，但数值谱分解未通过验证。`;
+  const focusOptions = [
+    { value: "all", label: "全部" },
+    ...Array.from({ length: state.dimension }, (_, index) => ({
+      value: String(index + 1) as OperatorComponentFocus,
+      label: `分量 ${index + 1}`,
+    })),
+  ] as readonly { value: OperatorComponentFocus; label: string }[];
+  const fallbackDescription =
+    derived.spectral.success && derived.application
+      ? state.lessonMode === "apply"
+        ? `测试向量 x=${vectorText(state.vector)} 经 U*、Lambda 与 U 依次作用，得到 Ax=${vectorText(derived.application.output)}。`
+        : `${state.dimension}维${className}算子，特征值为 ${derived.spectral.eigenvalues.map(formatComplex).join("，")}。`
+      : isNonNormal
+        ? `${state.dimension}维非 normal 算子，交换子 A*A-AA* 非零，因此不存在酉谱分解。`
+        : `${state.dimension}维 normal 算子，但数值谱分解未通过验证。`;
 
   return (
     <SceneLayout
       id="operator"
       index="06"
       title="谱分解"
-      subtitle={`${state.field}${state.dimension} · normal 算子的正交谱流水线`}
-      formulaLabel="谱恒等式"
+      subtitle={subtitle}
+      formulaLabel={state.lessonMode === "apply" ? "向量流水线" : "谱恒等式"}
       formula={formula}
       formulaStatus={className}
       formulaTone={formulaTone}
       insight={
         isNonNormal ? (
           <>
-            <strong>酉谱分解只属于 normal 算子。</strong>{" "}
-            当前交换子残差非零，舞台不会伪造 U 与 Λ。
+            <strong>非 normal 只排除酉对角化。</strong>{" "}
+            交换子热图给出失败位置；一般特征分解仍需另行判断。
           </>
         ) : !derived.spectral.success ? (
           <>
-            <strong>normal 性判定通过，但谱分解验证失败。</strong>{" "}
-            求解器未能给出通过残差门槛的稳定酉特征基。
+            <strong>normal 性成立，但数值证书未通过。</strong>{" "}
+            当前结果不会作为谱分解展示。
           </>
         ) : derived.repeated ? (
           <>
-            <strong>重复特征值对应一个特征子空间。</strong>{" "}
-            该子空间内可以选择不同的正交基，U 因而不唯一。
+            <strong>重根下 U 可变，谱投影 Pλ 不变。</strong>{" "}
+            舞台按特征子空间分组，避免把某一组基误认为唯一答案。
+          </>
+        ) : state.lessonMode === "apply" ? (
+          <>
+            <strong>每个颜色始终跟随同一谱分量。</strong> 所有贡献相加与直接计算
+            Ax 的残差为 {formatResidual(derived.application?.residual)}。
           </>
         ) : derived.classification.selfAdjoint ? (
           <>
-            <strong>自伴算子的特征值为实数。</strong>{" "}
-            酉基把空间拆成互相正交的特征方向。
+            <strong>自伴算子的谱点都落在实轴上。</strong>{" "}
+            互相正交的特征子空间给出唯一谱投影。
           </>
         ) : (
           <>
-            <strong>normal 但非自伴的算子仍可酉对角化。</strong>{" "}
-            复特征值同时编码幅值缩放与相位旋转。
+            <strong>实 normal 旋转对应实不变平面。</strong>{" "}
+            三维舞台不会把复特征向量伪装成实箭头。
           </>
         )
       }
       stage={
-        <VisualizationStage
-          key={`${state.field}-${state.dimension}`}
-          ref={stageRef}
-          className="operator-stage"
-          render={render}
-          renderKey={state}
-          duration={1500}
-          ariaLabel="normal 算子的酉谱分解流水线"
-          fallbackDescription={fallbackDescription}
-          showControls={derived.spectral.success}
-          showViewControls={false}
-          showExportButton
-          exportFilename="basis-lab-operator-spectrum.png"
-        />
+        <div className="operator-stage-shell">
+          {derived.spectral.success && (
+            <LessonRail
+              steps={steps}
+              active={activeStep}
+              onSelect={selectStep}
+            />
+          )}
+          <div className="operator-stage-shell__viewport">
+            {useThreeStage &&
+            derived.spectral.success &&
+            derived.application ? (
+              <Suspense
+                fallback={
+                  <div className="visualization-stage__fallback">
+                    正在按需加载 R3 谱舞台…
+                  </div>
+                }
+              >
+                <ThreeOperatorStage
+                  ref={threeStageRef}
+                  state={state}
+                  derived={derived}
+                  theme={theme}
+                  onProgressChange={syncActiveStep}
+                />
+              </Suspense>
+            ) : (
+              <VisualizationStage
+                key={`${state.field}-${state.dimension}-${state.lessonMode}`}
+                ref={canvasStageRef}
+                className="operator-stage"
+                render={render}
+                renderKey={state}
+                duration={1700}
+                ariaLabel={
+                  isNonNormal
+                    ? "非 normal 算子的交换子诊断"
+                    : state.lessonMode === "apply"
+                      ? "谱分解作用于测试向量的真实计算流水线"
+                      : "normal 算子的谱点、特征子空间和谱投影"
+                }
+                fallbackDescription={fallbackDescription}
+                showControls={derived.spectral.success}
+                showViewControls={false}
+                showExportButton
+                exportFilename="basis-lab-operator-spectrum.png"
+                onProgressChange={syncActiveStep}
+              />
+            )}
+          </div>
+        </div>
       }
       inspector={
         <>
@@ -606,7 +555,11 @@ export function OperatorScene({ theme }: SceneProps) {
                 label="恢复默认谱实验"
                 onClick={() => {
                   resetState();
-                  window.setTimeout(() => stageRef.current?.seek(1), 0);
+                  setActiveStep(applySteps.length - 1);
+                  globalThis.setTimeout(
+                    () => canvasStageRef.current?.seek(1),
+                    0,
+                  );
                 }}
               >
                 <RotateCcw size={15} />
@@ -662,6 +615,54 @@ export function OperatorScene({ theme }: SceneProps) {
             />
           </ControlSection>
 
+          <ControlSection title="教学视图" caption="谱结构与向量作用分开呈现">
+            <SegmentedControl
+              label="谱分解教学模式"
+              value={state.lessonMode}
+              options={lessonModeOptions}
+              onChange={setLessonMode}
+            />
+            {state.lessonMode === "apply" &&
+              (state.field === "R" ? (
+                <DynamicVectorInput
+                  label="x"
+                  name="operator-input"
+                  value={toRealVectorInput(state.vector, state.dimension)}
+                  onChange={(value) =>
+                    setState((current) => ({
+                      ...current,
+                      vector: fromRealVectorInput(value),
+                    }))
+                  }
+                  tone="red"
+                  testId="operator-vector-component"
+                />
+              ) : (
+                <ComplexVectorInput
+                  label="x"
+                  name="operator-input"
+                  value={toComplexVectorInput(state.vector, state.dimension)}
+                  onChange={(value) =>
+                    setState((current) => ({
+                      ...current,
+                      vector: fromComplexVectorInput(value),
+                    }))
+                  }
+                  tone="red"
+                />
+              ))}
+            {derived.spectral.success && (
+              <SegmentedControl
+                label="聚焦谱分量"
+                value={state.focus}
+                options={focusOptions}
+                onChange={(focus) =>
+                  setState((current) => ({ ...current, focus }))
+                }
+              />
+            )}
+          </ControlSection>
+
           <ControlSection title="算子分类" caption="以 A* 为共轭转置">
             <MetricList
               metrics={[
@@ -692,69 +693,95 @@ export function OperatorScene({ theme }: SceneProps) {
             />
           </ControlSection>
 
-          <ControlSection title="酉谱分解" caption="A = U Λ U*">
+          <ControlSection title="谱结果" caption="结构、因子与数值证书">
             {derived.spectral.success ? (
               <div className="operator-spectrum">
-                <div
-                  className="operator-spectrum__equation"
-                  aria-label="A 等于 U 乘 Lambda 乘 U 共轭转置"
-                >
-                  A = U Λ U*
-                </div>
-                <MetricList metrics={eigenvalues} />
-                <div className="operator-spectrum__factor">
-                  <ComplexMatrixInput
-                    label="酉特征基矩阵"
-                    symbol="U"
-                    value={toComplexMatrixInput(
-                      compactOperatorDisplayMatrix(derived.spectral.U),
-                      state.dimension,
-                    )}
-                    onChange={() => undefined}
-                    disabled
-                    testId="operator-u-cell"
-                  />
-                </div>
-                <MetricList
-                  metrics={[
-                    {
-                      label: "reconstruction",
-                      value: formatResidual(
-                        derived.spectral.reconstructionResidual,
-                      ),
-                      key: "reconstruction-residual",
-                      tone: "cyan",
-                    },
-                    {
-                      label: "orthogonality",
-                      value: formatResidual(
-                        derived.spectral.orthogonalityResidual,
-                      ),
-                      key: "orthogonality-residual",
-                    },
-                    {
-                      label: "eigen equation",
-                      value: formatResidual(derived.spectral.eigenResidual),
-                      key: "eigen-residual",
-                    },
-                    {
-                      label: "basis",
-                      value: derived.repeated ? "非唯一" : "确定至相位",
-                      key: "basis-uniqueness",
-                      tone: derived.repeated ? "yellow" : "blue",
-                    },
-                  ]}
+                <SegmentedControl
+                  label="谱结果视图"
+                  value={resultView}
+                  options={resultViewOptions}
+                  onChange={setResultView}
                 />
-                {derived.repeated ? (
-                  <div className="operator-spectrum__repeated">
-                    <Notice tone="info">
-                      重复特征值的特征子空间内，酉基 U 的选择不唯一。
-                    </Notice>
+                {resultView === "spectrum" ? (
+                  <>
+                    <div className="operator-spectrum__equation">A = Σ λPλ</div>
+                    <MetricList metrics={eigenvalues} />
+                    <div className="operator-eigenspace-list">
+                      {derived.eigenspaces.map((space, index) => (
+                        <div
+                          key={`${space.indices.join("-")}-${formatComplex(space.eigenvalue)}`}
+                        >
+                          <span>E{index + 1}</span>
+                          <strong>λ = {formatComplex(space.eigenvalue)}</strong>
+                          <small>dim {space.indices.length} · Pλ 唯一</small>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : resultView === "factor" ? (
+                  <div className="operator-spectrum__factor">
+                    <div className="operator-spectrum__equation">
+                      A = U Λ U*
+                    </div>
+                    <ReadonlyComplexMatrix
+                      label="酉特征基矩阵"
+                      symbol="U"
+                      matrix={derived.spectral.U}
+                      testId="operator-u-cell"
+                    />
+                    <ReadonlyComplexMatrix
+                      label="特征值对角矩阵"
+                      symbol="Λ"
+                      matrix={derived.spectral.lambda}
+                      testId="operator-lambda-cell"
+                    />
                   </div>
                 ) : (
-                  <Notice tone="success">
-                    重构、正交与特征方程残差均已通过验证。
-                  </Notice>
+                  <>
+                    <MetricList
+                      metrics={[
+                        {
+                          label: "reconstruction",
+                          value: formatResidual(
+                            derived.spectral.reconstructionResidual,
+                          ),
+                          key: "reconstruction-residual",
+                          tone: "cyan",
+                        },
+                        {
+                          label: "orthogonality",
+                          value: formatResidual(
+                            derived.spectral.orthogonalityResidual,
+                          ),
+                          key: "orthogonality-residual",
+                        },
+                        {
+                          label: "eigen equation",
+                          value: formatResidual(derived.spectral.eigenResidual),
+                          key: "eigen-residual",
+                        },
+                        {
+                          label: "application",
+                          value: formatResidual(derived.application?.residual),
+                          key: "application-residual",
+                          tone: "blue",
+                        },
+                        {
+                          label: "basis",
+                          value: derived.repeated
+                            ? "U 非唯一，Pλ 唯一"
+                            : "确定至相位",
+                          key: "basis-uniqueness",
+                          tone: derived.repeated ? "yellow" : "blue",
+                        },
+                      ]}
+                    />
+                    <Notice tone={derived.repeated ? "info" : "success"}>
+                      {derived.repeated
+                        ? "结果按谱投影认证；同一特征子空间中的正交基可以改变。"
+                        : "重构、正交、特征方程与向量应用残差均已通过验证。"}
+                    </Notice>
+                  </>
                 )}
               </div>
             ) : (

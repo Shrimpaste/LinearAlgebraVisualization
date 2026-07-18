@@ -182,6 +182,9 @@ export function TransformScene({ theme }: SceneProps) {
       const { ctx, viewport, easedProgress } = frame;
       drawGrid(ctx, viewport, palette);
       drawAxes(ctx, viewport, palette);
+      ctx.canvas.dataset.transformBasisImages = state.showBasisImages
+        ? "visible"
+        : "hidden";
 
       const sourceVector = toVec2(state.vector);
       if (!derived.valid || derived.matrix === null) {
@@ -248,6 +251,20 @@ export function TransformScene({ theme }: SceneProps) {
             applyMat2(animatedMatrix, [1, 0]),
             { color: palette.red, width: 2.5 },
           );
+        }
+      }
+
+      if (state.showBasisImages) {
+        for (let column = 0; column < state.columns; column += 1) {
+          drawVector(ctx, viewport, basisColumn(derived.matrix, column), {
+            color: column === 0 ? palette.cyan : palette.yellow,
+            label: "Te" + String(column + 1),
+            labelOffset: [8, 16],
+            width: 3.4,
+            dash: [2, 5],
+            alpha: 0.42,
+            headSize: 8,
+          });
         }
       }
 
@@ -352,14 +369,6 @@ export function TransformScene({ theme }: SceneProps) {
         true,
         palette.background,
       );
-
-      for (let column = 0; column < state.columns; column += 1) {
-        drawVector(ctx, viewport, basisColumn(derived.matrix, column), {
-          color: column === 0 ? palette.cyan : palette.yellow,
-          label: "Te" + String(column + 1),
-          width: 2.1,
-        });
-      }
     },
     [activeCodomainBasis, derived, state, theme],
   );
@@ -523,6 +532,7 @@ export function TransformScene({ theme }: SceneProps) {
                 showGrid={state.showGrid}
                 showSphere={state.showSphere}
                 showTrail={state.showTrail}
+                showBasisImages={state.showBasisImages}
                 exportFilename="basis-lab-transform-3d.png"
               />
             </Suspense>
@@ -799,6 +809,13 @@ export function TransformScene({ theme }: SceneProps) {
                 checked={state.showTrail}
                 onChange={(showTrail) =>
                   setState((current) => ({ ...current, showTrail }))
+                }
+              />
+              <Toggle
+                label="标准基像 Teᵢ"
+                checked={state.showBasisImages}
+                onChange={(showBasisImages) =>
+                  setState((current) => ({ ...current, showBasisImages }))
                 }
               />
             </div>

@@ -115,6 +115,62 @@ export function identityRealMatrix(dimension: Dimension): RealMatrix {
   );
 }
 
+/** Returns S with S^T S = G for a symmetric positive-definite real metric. */
+export function choleskyMetricEmbedding(
+  metric: RealMatrix,
+  epsilon = ND_EPSILON,
+): RealMatrix | null {
+  const shape = validateRealMatrix(metric, "metric");
+  if (shape.rows !== shape.columns) {
+    throw new RangeError("metric must be square");
+  }
+  if (!Number.isFinite(epsilon) || epsilon < 0) {
+    throw new RangeError("epsilon must be a finite non-negative number");
+  }
+  const scale = maxAbs(metric);
+  if (scale === 0) return null;
+  for (let row = 0; row < shape.rows; row += 1) {
+    for (let column = 0; column < row; column += 1) {
+      if (
+        Math.abs(metric[row]![column]! - metric[column]![row]!) >
+        scale * epsilon
+      ) {
+        return null;
+      }
+    }
+  }
+
+  const lower = Array.from({ length: shape.rows }, () =>
+    Array.from({ length: shape.columns }, () => 0),
+  );
+  for (let row = 0; row < shape.rows; row += 1) {
+    for (let column = 0; column <= row; column += 1) {
+      let value = metric[row]![column]! / scale;
+      for (let index = 0; index < column; index += 1) {
+        value -= lower[row]![index]! * lower[column]![index]!;
+      }
+      if (row === column) {
+        if (!Number.isFinite(value) || value <= 0) return null;
+        lower[row]![column] = Math.sqrt(value);
+      } else {
+        const diagonal = lower[column]![column]!;
+        if (!Number.isFinite(value) || diagonal <= 0) {
+          return null;
+        }
+        lower[row]![column] = value / diagonal;
+      }
+    }
+  }
+
+  const factorScale = Math.sqrt(scale);
+  return Array.from({ length: shape.rows }, (_, row) =>
+    Array.from(
+      { length: shape.columns },
+      (_, column) => lower[column]![row]! * factorScale,
+    ),
+  );
+}
+
 export function resizeRealVector(
   vector: RealVector,
   dimension: Dimension,

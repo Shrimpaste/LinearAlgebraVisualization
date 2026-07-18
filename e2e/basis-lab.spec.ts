@@ -390,6 +390,8 @@ test("3x2 transform renders WebGL pixels and keeps the full timeline contract", 
   const playback = page.getByTestId("visualization-stage-playback");
   const scrubber = page.getByTestId("visualization-stage-scrubber");
   await expectNonblankWebGLCanvas(canvas);
+  await page.getByLabel("标准基像 Teᵢ").uncheck();
+  await expect(canvas).toHaveAttribute("data-transform-basis-images", "hidden");
 
   await playback.click();
   await expect(stage).toHaveAttribute("data-playback-state", "playing");
@@ -424,6 +426,14 @@ test("transform basis toggles preserve the map and ordered v/w bases stay exact"
   await expect(result(page, "output")).toHaveText("(0.75, 3)");
 
   const canvas = page.getByTestId("visualization-stage-canvas");
+  const basisImages = page.getByLabel("标准基像 Teᵢ");
+  await expect(basisImages).toBeChecked();
+  await expect(canvas).toHaveAttribute(
+    "data-transform-basis-images",
+    "visible",
+  );
+  await basisImages.uncheck();
+  await expect(canvas).toHaveAttribute("data-transform-basis-images", "hidden");
   await expect(canvas).toHaveAttribute(
     "data-transform-basis-path",
     "v_i->T(v_i)",
@@ -653,6 +663,38 @@ test("inner-product metric and Gram-Schmidt mode remain synchronized", async ({
   await expect(result(page, "gram-rank")).toHaveText("1");
 });
 
+test("real R3 inner products use a nonblank metric-isometric Three.js stage", async ({
+  page,
+}) => {
+  await openModule(page, "inner-product");
+  await page.getByRole("combobox", { name: "空间维数" }).selectOption("3");
+  await page.getByRole("combobox", { name: "内积度量" }).selectOption("custom");
+  await setMatrixCells(page, "matrix-cell", [4, 0, 0, 0, 1, 0, 0, 0, 1]);
+  await page.getByLabel("u x 分量", { exact: true }).fill("1");
+  await page.getByLabel("u y 分量", { exact: true }).fill("0");
+  await page.getByLabel("u z 分量", { exact: true }).fill("0");
+  await page.getByLabel("v x 分量", { exact: true }).fill("1");
+  await page.getByLabel("v y 分量", { exact: true }).fill("1");
+  await page.getByLabel("v z 分量", { exact: true }).fill("0");
+
+  const contract = page.getByTestId("inner-product-stage-contract");
+  await expect(contract).toHaveAttribute("data-observation", "real-metric-3d");
+  const canvas = page.getByTestId("visualization-stage-canvas");
+  await expect(canvas).toHaveAttribute("data-metric-geometry", "available");
+  await expect(canvas).toHaveAttribute("data-metric-first", "2,0,0");
+  await expect(canvas).toHaveAttribute("data-metric-second", "2,1,0");
+  await expect(canvas).toHaveAttribute("data-metric-projection", "1.6,0.8,0");
+  await expect(canvas).toHaveAttribute("data-metric-residual", "0.4,-0.8,0");
+  await expectNonblankWebGLCanvas(canvas);
+
+  await page.getByRole("radio", { name: "Gram–Schmidt" }).click();
+  await expect(canvas).toHaveAttribute(
+    "data-inner-product-mode",
+    "gram-schmidt",
+  );
+  await expect(result(page, "gram-rank")).toHaveText("2");
+});
+
 test("complex custom Gram matrices expose all four independent axiom certificates", async ({
   page,
 }) => {
@@ -731,45 +773,94 @@ test("invalid metric disables inner-product results", async ({ page }) => {
   await expect(page.getByText("当前 G 不是对称正定矩阵。")).toBeVisible();
 });
 
-test("spectral module separates self-adjoint, normal, and non-normal operators", async ({
+test("spectral module teaches verified vector application and operator classes", async ({
   page,
 }) => {
   await openModule(page, "operator");
 
   await expect(result(page, "operator-class")).toHaveText("self-adjoint");
-  await expect(page.getByTestId("formula-readout")).toContainText("A = U Λ U*");
+  await expect(page.getByTestId("formula-readout")).toContainText(
+    "x → U*x → Λc → UΛc = Ax",
+  );
+  await expect(page.getByTestId("operator-vector-component")).toHaveCount(2);
   await expect(
-    page.getByText("重构、正交与特征方程残差均已通过验证。"),
+    page.getByRole("group", { name: "谱分解教学步骤" }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "实旋转" }).click();
-  await expect(result(page, "operator-class")).toHaveText("normal");
-  await expect(page.getByTestId("formula-readout")).toContainText("A = U Λ U*");
-  await expect(result(page, "reconstruction-residual")).toBeVisible();
+  await page.getByTestId("operator-vector-component").first().fill("2");
+  await page.getByRole("radio", { name: "验证" }).click();
+  await expect(result(page, "application-residual")).toHaveText("0");
+  await expect(
+    page.getByText("重构、正交、特征方程与向量应用残差均已通过验证。"),
+  ).toBeVisible();
 
-  await page.getByRole("radio", { name: "复数 C", exact: true }).click();
-  await page.getByRole("combobox", { name: "空间维数" }).selectOption("3");
+  await page.getByRole("radio", { name: "查看谱结构" }).click();
+  await expect(page.getByTestId("formula-readout")).toContainText(
+    "A = Σ λPλ = U Λ U*",
+  );
+  await page.getByRole("radio", { name: "U / Λ" }).click();
   const factor = page.locator(".operator-spectrum__factor");
   await expect(factor).toBeVisible();
+  await expect(page.getByTestId("operator-u-cell")).toHaveCount(4);
+  await expect(page.getByTestId("operator-lambda-cell")).toHaveCount(4);
+  await expect(
+    page.getByRole("spinbutton", { name: /酉特征基矩阵/ }),
+  ).toHaveCount(0);
   const factorDimensions = await factor.evaluate((element) => ({
     client: element.clientWidth,
     scroll: element.scrollWidth,
-    matrix: element.querySelector(".matrix-editor")?.getBoundingClientRect()
-      .width,
+    matrices: [
+      ...element.querySelectorAll<HTMLElement>(".operator-math-matrix"),
+    ].map((matrix) => matrix.getBoundingClientRect().width),
   }));
   expect(factorDimensions.scroll).toBeLessThanOrEqual(
     factorDimensions.client + 1,
   );
-  expect(factorDimensions.matrix ?? Infinity).toBeLessThanOrEqual(
-    factorDimensions.client,
+  expect(
+    factorDimensions.matrices.every(
+      (width) => width <= factorDimensions.client + 1,
+    ),
+  ).toBe(true);
+
+  await page.getByRole("button", { name: "实旋转" }).click();
+  await expect(result(page, "operator-class")).toHaveText("normal");
+  await expect(page.getByTestId("formula-readout")).toContainText(
+    "A = Σ λPλ = U Λ U*",
   );
 
   await page.getByRole("button", { name: "非 normal 剪切" }).click();
   await expect(result(page, "operator-class")).toHaveText("非 normal");
   await expect(page.getByTestId("formula-readout")).toContainText("A*A ≠ AA*");
   await expect(
-    page.getByText("A*A 与 AA* 不一致，当前算子不存在酉谱分解。"),
+    page.getByText(
+      "A*A 与 AA* 不一致，因此不存在酉谱分解；这不排除一般特征分解。",
+    ),
   ).toBeVisible();
+  await expect(page.getByRole("group", { name: "谱分解教学步骤" })).toHaveCount(
+    0,
+  );
+  await expectNoHorizontalOverflow(page);
+});
+
+test("spectral R3 stage renders pixels and groups repeated eigenspaces", async ({
+  page,
+}) => {
+  await openModule(page, "operator");
+  await page.getByRole("combobox", { name: "空间维数" }).selectOption("3");
+
+  const canvas = page.getByTestId("visualization-stage-canvas");
+  await expect(canvas).toHaveAccessibleName(
+    "R3 实 normal 算子的谱结构与向量作用三维舞台",
+  );
+  await expectNonblankWebGLCanvas(canvas);
+  await page.locator(".operator-lesson-rail__steps button").last().click();
+  await expect(canvas).toHaveAttribute("data-progress", "1.0000");
+
+  await page.getByRole("button", { name: "重复特征子空间" }).click();
+  await expect(page.getByText(/重根下 U 可变，谱投影 Pλ 不变/)).toBeVisible();
+  await expect(page.getByText("dim 2 · Pλ 唯一")).toBeVisible();
+  await expectNonblankWebGLCanvas(canvas);
+  await expectNoHorizontalOverflow(page);
 });
 
 test("SVD and right-polar stages cover wide, tall, and rank-deficient maps", async ({
@@ -845,7 +936,7 @@ test("determinant collapse retains its boundary semantics", async ({
   ).toBeVisible();
 });
 
-test("legacy scene states migrate to the span v2, transform v4, and eigen v2 schemas", async ({
+test("legacy scene states migrate to span v2, transform v5, eigen v2, and operator v2", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -904,6 +995,18 @@ test("legacy scene states migrate to the span v2, transform v4, and eigen v2 sch
         showField: true,
       }),
     );
+    localStorage.setItem(
+      "basis-lab:operator",
+      JSON.stringify({
+        version: 1,
+        field: "R",
+        dimension: 2,
+        matrix: [
+          [2, 1],
+          [1, 2],
+        ],
+      }),
+    );
   });
 
   await openModule(page, "span");
@@ -915,6 +1018,11 @@ test("legacy scene states migrate to the span v2, transform v4, and eigen v2 sch
   await expect(result(page, "eigenbasis-coordinate-matrix")).toHaveText(
     "[3, 0] [0, 2]",
   );
+  await openModule(page, "operator");
+  await expect(page.getByTestId("operator-vector-component")).toHaveCount(2);
+  await expect(page.getByTestId("formula-readout")).toContainText(
+    "x → U*x → Λc → UΛc = Ax",
+  );
 
   const versions = await page.evaluate(() => ({
     span: JSON.parse(localStorage.getItem("basis-lab:span") ?? "null")?.version,
@@ -924,18 +1032,48 @@ test("legacy scene states migrate to the span v2, transform v4, and eigen v2 sch
       ?.version,
     eigenSeed: JSON.parse(localStorage.getItem("basis-lab:eigen") ?? "null")
       ?.seed,
+    operator: JSON.parse(localStorage.getItem("basis-lab:operator") ?? "null")
+      ?.version,
+    operatorVector: JSON.parse(
+      localStorage.getItem("basis-lab:operator") ?? "null",
+    )?.vector,
   }));
   expect(versions).toEqual({
     span: 2,
-    transform: 4,
+    transform: 5,
     eigen: 2,
     eigenSeed: undefined,
+    operator: 2,
+    operatorVector: [
+      { re: 1.25, im: 0 },
+      { re: -0.8, im: 0 },
+    ],
   });
+});
+
+test("spectral vector and teaching mode persist across reloads", async ({
+  page,
+}) => {
+  await openModule(page, "operator");
+  await page.getByTestId("operator-vector-component").first().fill("2.5");
+  await page.getByRole("radio", { name: "查看谱结构" }).click();
+
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+
+  await expect(page.getByTestId("formula-readout")).toContainText(
+    "A = Σ λPλ = U Λ U*",
+  );
+  await page.getByRole("radio", { name: "作用于向量" }).click();
+  await expect(
+    page.getByTestId("operator-vector-component").first(),
+  ).toHaveValue("2.5");
 });
 
 test("scene edits persist across reloads", async ({ page }) => {
   await openModule(page, "transform");
   await setMatrix(page, [2, 0, 0, 3]);
+  await page.getByLabel("标准基像 Teᵢ").uncheck();
   await expect(result(page, "output")).toHaveText("(3, 3)");
 
   await page.reload();
@@ -943,6 +1081,11 @@ test("scene edits persist across reloads", async ({ page }) => {
 
   await expect(page.getByLabel("变换矩阵 第一行第一列")).toHaveValue("2");
   await expect(page.getByLabel("变换矩阵 第二行第二列")).toHaveValue("3");
+  await expect(page.getByLabel("标准基像 Teᵢ")).not.toBeChecked();
+  await expect(page.getByTestId("visualization-stage-canvas")).toHaveAttribute(
+    "data-transform-basis-images",
+    "hidden",
+  );
   await expect(result(page, "determinant")).toHaveText("6");
   await expect(result(page, "output")).toHaveText("(3, 3)");
 });

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef } from "react";
 import { RotateCcw } from "lucide-react";
 import type { SceneProps } from "../../app/types";
 import { metricInnerProduct, type Mat2, type Vec2 } from "../../math";
@@ -8,6 +8,8 @@ import {
   type ComplexVector,
   type Dimension,
   type Field,
+  type RealMatrix,
+  type RealVector,
 } from "../../math/nd";
 import {
   VisualizationStage,
@@ -68,6 +70,13 @@ import {
   type InnerProductMode,
   type MetricPreset,
 } from "./model";
+import type { ThreeInnerProductStageHandle } from "./ThreeInnerProductStage";
+
+const ThreeInnerProductStage = lazy(() =>
+  import("./ThreeInnerProductStage").then((module) => ({
+    default: module.ThreeInnerProductStage,
+  })),
+);
 
 const dimensionOptions = [
   { value: "1", label: "1 维" },
@@ -98,13 +107,13 @@ function getInnerProductStageContract(
     field === "C"
       ? "complex-component-argand"
       : dimension === 3
-        ? "real-component-2d"
+        ? "real-metric-3d"
         : "real-native";
   const observationLabel =
     field === "C"
       ? `逐分量 Argand 相位投影，完整计算保持在 C${dimension}`
       : dimension === 3
-        ? "R3 分量二维观测投影，完整计算保持在三维空间"
+        ? "R3 的 G 等距三维度量视图"
         : `${dimension} 维实空间几何`;
 
   return {
@@ -128,6 +137,14 @@ function toRealVectorInput(
 
 function fromRealVectorInput(value: DynamicVectorValue): ComplexVector {
   return value.entries.map((entry) => complex(entry));
+}
+
+function realVector(value: ComplexVector): RealVector {
+  return value.map((entry) => entry.re);
+}
+
+function realMatrix(value: ComplexMatrix): RealMatrix {
+  return value.map((row) => row.map((entry) => entry.re));
 }
 
 function toComplexVectorInput(
@@ -210,18 +227,7 @@ function complexComponentPoint(
   ];
 }
 
-function projectVector(
-  vector: ComplexVector,
-  field: Field,
-  size: Dimension,
-): Vec2 {
-  if (field === "C") return [vector[0]?.re ?? 0, vector[0]?.im ?? 0];
-  if (size === 3) {
-    return [
-      (vector[0]?.re ?? 0) - 0.55 * (vector[2]?.re ?? 0),
-      (vector[1]?.re ?? 0) + 0.35 * (vector[2]?.re ?? 0),
-    ];
-  }
+function projectVector(vector: ComplexVector): Vec2 {
   return [vector[0]?.re ?? 0, vector[1]?.re ?? 0];
 }
 
@@ -577,8 +583,15 @@ export function InnerProductScene({ theme }: SceneProps) {
     migrateInnerProductState,
   );
   const stageRef = useRef<VisualizationStageHandle>(null);
+  const threeStageRef = useRef<ThreeInnerProductStageHandle>(null);
   const dragging = useRef<"first" | "second" | null>(null);
   const derived = useMemo(() => deriveInnerProduct(state), [state]);
+  const usesThree = state.field === "R" && state.dimension === 3;
+
+  const replay = useCallback(() => {
+    if (usesThree) threeStageRef.current?.replay();
+    else stageRef.current?.replay();
+  }, [usesThree]);
 
   const render = useCallback(
     (frame: VisualizationRenderFrame) => {
@@ -620,8 +633,8 @@ export function InnerProductScene({ theme }: SceneProps) {
         return;
       }
 
-      const first = projectVector(state.first, state.field, state.dimension);
-      const second = projectVector(state.second, state.field, state.dimension);
+      const first = projectVector(state.first);
+      const second = projectVector(state.second);
       if (state.showMetricCircle && state.dimension === 2 && derived.valid) {
         drawMetricBall(
           frame,
@@ -668,29 +681,10 @@ export function InnerProductScene({ theme }: SceneProps) {
         palette.background,
       );
 
-      if (state.dimension === 3) {
-        drawLabel(
-          ctx,
-          viewport,
-          [-3.8, 2.65],
-          "R3 分量二维观测 · 数值证书保持三维",
-          palette.textSoft,
-          [0, 0],
-        );
-      }
-
       if (state.mode === "projection" && derived.projection) {
-        const projected = projectVector(
-          derived.projection.projection,
-          state.field,
-          state.dimension,
-        );
+        const projected = projectVector(derived.projection.projection);
         const projectionPoint = lerpVec([0, 0], projected, easedProgress);
-        const residualTarget = projectVector(
-          derived.projection.residual,
-          state.field,
-          state.dimension,
-        );
+        const residualTarget = projectVector(derived.projection.residual);
         const residualEnd: Vec2 = [
           projectionPoint[0] + residualTarget[0] * easedProgress,
           projectionPoint[1] + residualTarget[1] * easedProgress,
@@ -720,11 +714,7 @@ export function InnerProductScene({ theme }: SceneProps) {
           drawVector(
             ctx,
             viewport,
-            lerpVec(
-              first,
-              projectVector(firstBasis, state.field, state.dimension),
-              easedProgress,
-            ),
+            lerpVec(first, projectVector(firstBasis), easedProgress),
             { color: palette.blue, label: "q1", width: 3 },
           );
         }
@@ -732,11 +722,7 @@ export function InnerProductScene({ theme }: SceneProps) {
           drawVector(
             ctx,
             viewport,
-            lerpVec(
-              second,
-              projectVector(secondBasis, state.field, state.dimension),
-              easedProgress,
-            ),
+            lerpVec(second, projectVector(secondBasis), easedProgress),
             { color: palette.yellow, label: "q2", width: 3 },
           );
         }
@@ -750,7 +736,7 @@ export function InnerProductScene({ theme }: SceneProps) {
       if (state.field !== "R" || state.dimension !== 2) return false;
       if (
         isWorldPointNearCanvas(
-          projectVector(state.first, state.field, state.dimension),
+          projectVector(state.first),
           event.canvas,
           event.viewport,
         )
@@ -758,7 +744,7 @@ export function InnerProductScene({ theme }: SceneProps) {
         dragging.current = "first";
       } else if (
         isWorldPointNearCanvas(
-          projectVector(state.second, state.field, state.dimension),
+          projectVector(state.second),
           event.canvas,
           event.viewport,
         )
@@ -794,7 +780,7 @@ export function InnerProductScene({ theme }: SceneProps) {
         ? state.metric
         : metricForPreset(metricPreset, state.field, state.dimension);
     setState((current) => ({ ...current, metricPreset, metric }));
-    window.setTimeout(() => stageRef.current?.replay(), 0);
+    window.setTimeout(replay, 0);
   };
 
   const formulaText =
@@ -881,6 +867,11 @@ export function InnerProductScene({ theme }: SceneProps) {
             <strong>复空间的完整实维数是两倍。</strong> 舞台只显示每个分量的
             Argand 投影，数值证书在完整空间计算。
           </>
+        ) : state.dimension === 3 ? (
+          <>
+            <strong>三维舞台使用 G 的等距度量坐标。</strong> 若
+            SᵀS=G，则画面绘制 Sx，使可见长度、夹角和正交关系与原内积一致。
+          </>
         ) : (
           <>
             <strong>Gram 矩阵重定义长度、角度和正交。</strong> 合法 G
@@ -897,40 +888,73 @@ export function InnerProductScene({ theme }: SceneProps) {
           data-observation={stageContract.observation}
           data-draw-layer={stageContract.drawLayer}
         >
-          <VisualizationStage
-            key={
-              (isMobile ? "mobile" : "desktop") +
-              "-" +
-              state.field +
-              "-" +
-              String(state.dimension)
-            }
-            ref={stageRef}
-            render={render}
-            renderKey={state}
-            viewport={{
-              scale: isMobile ? 48 : 72,
-              center: isMobile ? [0, 0.25] : [0, 0],
-            }}
-            duration={1050}
-            ariaLabel={stageContract.ariaLabel}
-            fallbackDescription={
-              stageContract.fallbackLabel +
-              "。u=" +
-              formatComplexVector(state.first) +
-              "，v=" +
-              formatComplexVector(state.second) +
-              "，内积为 " +
-              formulaText +
-              "。"
-            }
-            showExportButton
-            exportFilename="basis-lab-inner-product.png"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={stopDragging}
-            onPointerCancel={stopDragging}
-          />
+          {usesThree ? (
+            <Suspense
+              fallback={
+                <div className="stage-loading" role="status">
+                  正在加载三维度量舞台…
+                </div>
+              }
+            >
+              <ThreeInnerProductStage
+                ref={threeStageRef}
+                first={realVector(state.first)}
+                second={realVector(state.second)}
+                metric={realMatrix(state.metric)}
+                mode={state.mode}
+                projection={
+                  derived.projection
+                    ? realVector(derived.projection.projection)
+                    : null
+                }
+                residual={
+                  derived.projection
+                    ? realVector(derived.projection.residual)
+                    : null
+                }
+                orthonormal={derived.gramSchmidt.orthonormal.map(realVector)}
+                valid={derived.valid}
+                showUnitSphere={state.showMetricCircle}
+                theme={theme}
+                exportFilename="basis-lab-inner-product-3d.png"
+              />
+            </Suspense>
+          ) : (
+            <VisualizationStage
+              key={
+                (isMobile ? "mobile" : "desktop") +
+                "-" +
+                state.field +
+                "-" +
+                String(state.dimension)
+              }
+              ref={stageRef}
+              render={render}
+              renderKey={state}
+              viewport={{
+                scale: isMobile ? 48 : 72,
+                center: isMobile ? [0, 0.25] : [0, 0],
+              }}
+              duration={1050}
+              ariaLabel={stageContract.ariaLabel}
+              fallbackDescription={
+                stageContract.fallbackLabel +
+                "。u=" +
+                formatComplexVector(state.first) +
+                "，v=" +
+                formatComplexVector(state.second) +
+                "，内积为 " +
+                formulaText +
+                "。"
+              }
+              showExportButton
+              exportFilename="basis-lab-inner-product.png"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={stopDragging}
+              onPointerCancel={stopDragging}
+            />
+          )}
         </div>
       }
       inspector={
@@ -942,7 +966,9 @@ export function InnerProductScene({ theme }: SceneProps) {
                 ? "实部/虚部独立编辑，完整空间按复维数计算"
                 : state.dimension === 2
                   ? "端点可在画布中直接拖动"
-                  : "舞台使用低维投影，读数保持完整维数"
+                  : state.dimension === 3
+                    ? "三维舞台使用 G 等距坐标，读数保持原坐标"
+                    : "一维数轴展示"
             }
             action={
               <IconButton label="恢复默认内积实验" onClick={resetState}>
@@ -983,7 +1009,7 @@ export function InnerProductScene({ theme }: SceneProps) {
               ]}
               onChange={(mode) => {
                 setState((current) => ({ ...current, mode }));
-                window.setTimeout(() => stageRef.current?.replay(), 0);
+                window.setTimeout(replay, 0);
               }}
             />
             {state.field === "R" ? (
@@ -1085,9 +1111,11 @@ export function InnerProductScene({ theme }: SceneProps) {
                 }
               />
             )}
-            {state.field === "R" && state.dimension === 2 && (
+            {state.field === "R" && state.dimension >= 2 && (
               <Toggle
-                label="显示度量单位圆"
+                label={
+                  state.dimension === 3 ? "显示度量单位球" : "显示度量单位圆"
+                }
                 checked={state.showMetricCircle}
                 onChange={(showMetricCircle) =>
                   setState((current) => ({ ...current, showMetricCircle }))

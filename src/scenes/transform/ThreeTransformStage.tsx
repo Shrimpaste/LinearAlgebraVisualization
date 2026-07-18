@@ -39,6 +39,7 @@ export interface ThreeTransformStageProps {
   showGrid: boolean;
   showSphere: boolean;
   showTrail: boolean;
+  showBasisImages?: boolean;
   exportFilename: string;
 }
 
@@ -446,6 +447,7 @@ function buildContent(
   showGrid: boolean,
   showSphere: boolean,
   showTrail: boolean,
+  showBasisImages: boolean,
 ): StageContent {
   validateInputs(matrix, vector, inputDimension, outputDimension);
   if (intermediateMatrix) {
@@ -526,33 +528,37 @@ function buildContent(
     morphGeometries.push(morph);
   }
 
-  const basisColors = [palette.cyan, palette.yellow, palette.blue] as const;
-  for (let index = 0; index < inputDimension; index += 1) {
-    const basis = basisVectors
-      ? embedVector(
-          Array.from(
-            { length: inputDimension },
-            (_, row) => basisVectors[row]?.[index] ?? 0,
-          ),
-        )
-      : new THREE.Vector3().setComponent(index, 1);
-    const arrow = createArrow(
-      basis,
-      applyMatrix(matrix, basis, inputDimension, outputDimension),
-      basisColors[index]!,
-      `v${index + 1}`,
-      intermediateMatrix
-        ? applyMatrix(
-            intermediateMatrix,
-            basis,
-            inputDimension,
-            outputDimension,
+  // Custom-basis paths are core to the coordinate workflow; the preference only
+  // suppresses the standard e_i -> Te_i reference arrows.
+  if (basisVectors || showBasisImages) {
+    const basisColors = [palette.cyan, palette.yellow, palette.blue] as const;
+    for (let index = 0; index < inputDimension; index += 1) {
+      const basis = basisVectors
+        ? embedVector(
+            Array.from(
+              { length: inputDimension },
+              (_, row) => basisVectors[row]?.[index] ?? 0,
+            ),
           )
-        : null,
-    );
-    root.add(arrow.arrow);
-    if (arrow.label) root.add(arrow.label);
-    arrows.push(arrow);
+        : new THREE.Vector3().setComponent(index, 1);
+      const arrow = createArrow(
+        basis,
+        applyMatrix(matrix, basis, inputDimension, outputDimension),
+        basisColors[index]!,
+        `v${index + 1}`,
+        intermediateMatrix
+          ? applyMatrix(
+              intermediateMatrix,
+              basis,
+              inputDimension,
+              outputDimension,
+            )
+          : null,
+      );
+      root.add(arrow.arrow);
+      if (arrow.label) root.add(arrow.label);
+      arrows.push(arrow);
+    }
   }
 
   const sourceVector = embedVector(vector);
@@ -738,6 +744,7 @@ export const ThreeTransformStage = forwardRef<
     showGrid,
     showSphere,
     showTrail,
+    showBasisImages = true,
     exportFilename,
   },
   forwardedRef,
@@ -1014,10 +1021,14 @@ export const ThreeTransformStage = forwardRef<
         showGrid,
         showSphere,
         showTrail,
+        showBasisImages,
       );
       runtime.scene.add(content.root);
       contentRef.current = content;
       runtime.renderer.domElement.dataset.transformBasisPath = basisPath;
+      runtime.renderer.domElement.dataset.transformBasisImages = showBasisImages
+        ? "visible"
+        : "hidden";
 
       const visibleDimension = Math.max(
         inputDimension,
@@ -1046,6 +1057,7 @@ export const ThreeTransformStage = forwardRef<
     matrix,
     outputDimension,
     showGrid,
+    showBasisImages,
     showSphere,
     showTrail,
     theme,

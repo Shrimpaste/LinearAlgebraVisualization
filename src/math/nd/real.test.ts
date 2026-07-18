@@ -3,6 +3,7 @@ import {
   analyzeRealBasis,
   analyzeRealIndependentSubset,
   applyRealMatrix,
+  choleskyMetricEmbedding,
   conditionNumberRealMatrix,
   coordinateToStandardRealMap,
   determinantRealMatrix,
@@ -103,6 +104,54 @@ describe("N-dimensional real operations", () => {
     ]);
     expect(interpolateRealMatrices([[1]], [[5]], 0.25)).toEqual([[2]]);
     expect(() => multiplyRealMatrices([[1, 2]], [[1, 2]])).toThrow(RangeError);
+  });
+
+  it("builds an isometric coordinate embedding for real Gram metrics", () => {
+    const metric = [
+      [4, 1, 0.5],
+      [1, 3, 0.25],
+      [0.5, 0.25, 2],
+    ];
+    const embedding = choleskyMetricEmbedding(metric);
+    expect(embedding).not.toBeNull();
+    expectMatrixClose(
+      multiplyRealMatrices(transposeRealMatrix(embedding!), embedding!),
+      metric,
+    );
+
+    const first = [1, -2, 0.5];
+    const second = [0.25, 1, 3];
+    const embeddedFirst = applyRealMatrix(embedding!, first);
+    const embeddedSecond = applyRealMatrix(embedding!, second);
+    const visibleInnerProduct = embeddedFirst.reduce(
+      (sum, value, index) => sum + value * embeddedSecond[index]!,
+      0,
+    );
+    const metricInnerProduct = applyRealMatrix(metric, first).reduce(
+      (sum, value, index) => sum + value * second[index]!,
+      0,
+    );
+    expect(visibleInnerProduct).toBeCloseTo(metricInnerProduct, 10);
+    const scaledEmbedding = choleskyMetricEmbedding([
+      [1e20, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1e-20],
+    ]);
+    expect(scaledEmbedding?.[0]?.[0]).toBeCloseTo(1e10, 2);
+    expect(scaledEmbedding?.[1]?.[1]).toBeCloseTo(1, 10);
+    expect(scaledEmbedding?.[2]?.[2]).toBeCloseTo(1e-10, 18);
+    expect(
+      choleskyMetricEmbedding([
+        [1, 2],
+        [2, 1],
+      ]),
+    ).toBeNull();
+    expect(
+      choleskyMetricEmbedding([
+        [1, 0],
+        [1, 1],
+      ]),
+    ).toBeNull();
   });
 
   it("computes determinant, inverse, rank, and scale-aware condition", () => {

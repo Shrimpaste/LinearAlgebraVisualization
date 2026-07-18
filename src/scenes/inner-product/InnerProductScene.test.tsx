@@ -32,6 +32,23 @@ vi.mock("../../components/VisualizationStage", async () => {
   };
 });
 
+vi.mock("./ThreeInnerProductStage", async () => {
+  const { createElement, forwardRef } = await import("react");
+  return {
+    ThreeInnerProductStage: forwardRef(function MockThreeInnerProductStage(
+      props: { readonly mode: string },
+      _ref,
+    ) {
+      return createElement("div", {
+        role: "img",
+        "aria-label": `R3 内积的${props.mode}，G 等距三维度量视图`,
+        "data-testid": "visualization-stage",
+        "data-observation": "real-metric-3d",
+      });
+    }),
+  };
+});
+
 const storageKey = "basis-lab:inner-product";
 
 function storeComplexMode(mode: "projection" | "gram-schmidt" | "axioms") {
@@ -72,7 +89,7 @@ describe("InnerProductScene stage contract", () => {
     expect(stage).toHaveAccessibleName(/内积公理验证/);
   });
 
-  it("describes R3 as a two-dimensional observation instead of an isometry", () => {
+  it("routes real R3 through the metric-isometric Three.js stage", async () => {
     window.localStorage.setItem(
       storageKey,
       JSON.stringify({
@@ -87,10 +104,9 @@ describe("InnerProductScene stage contract", () => {
 
     expect(screen.getByTestId("inner-product-stage-contract")).toHaveAttribute(
       "data-observation",
-      "real-component-2d",
+      "real-metric-3d",
     );
-    const stage = screen.getByTestId("visualization-stage");
-    expect(stage).toHaveAccessibleName(/R3 分量二维观测投影/);
-    expect(stage).not.toHaveAccessibleName(/等距/);
+    const stage = await screen.findByTestId("visualization-stage");
+    expect(stage).toHaveAccessibleName(/R3 内积.*G 等距三维度量视图/);
   });
 });
