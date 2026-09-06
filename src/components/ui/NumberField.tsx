@@ -116,6 +116,7 @@ export function NumberField({
         aria-valuemin={min}
         aria-valuemax={max}
         value={draft}
+        title={`完整数值：${value}`}
         onChange={handleChange}
         onBlur={commitDraft}
         onKeyDown={handleKeyDown}

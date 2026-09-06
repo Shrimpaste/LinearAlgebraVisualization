@@ -561,7 +561,7 @@ export function DecompositionScene({ theme }: SceneProps) {
             )}
           </ControlSection>
 
-          <ControlSection title="数值证书">
+          <ControlSection advanced title="数值证书">
             <MetricList
               metrics={[
                 {

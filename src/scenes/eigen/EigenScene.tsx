@@ -24,6 +24,7 @@ import { Notice } from "../../components/ui/Notice";
 import { PresetGrid } from "../../components/ui/PresetGrid";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { Toggle } from "../../components/ui/Toggle";
+import { Prediction } from "../../components/ui/Prediction";
 import { isWorldPointNearCanvas } from "../../rendering/interaction";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -388,6 +389,7 @@ export function EigenScene({ theme }: SceneProps) {
             />
           </ControlSection>
           <ControlSection
+            advanced
             title="共享自定义基 Q"
             caption="按顺序输入 Q = (q₁, …, qₙ)；同一 Q 同时用于定义域与陪域"
           >
@@ -430,6 +432,15 @@ export function EigenScene({ theme }: SceneProps) {
                 }
                 tone="blue"
               />
+              <details className="challenge-card">
+                <summary>预测与检验</summary>
+                <Prediction
+                  question="Av与v方向相反，v可能是特征向量吗？"
+                  options={["可能，λ为负", "不可能"]}
+                  correct={0}
+                  explanation="特征方向是一条直线；λ为负时沿同一直线反向。零向量不能作为特征向量。"
+                />
+              </details>
               <Toggle
                 label="揭示特征方向"
                 checked={state.reveal !== false}
@@ -445,6 +456,7 @@ export function EigenScene({ theme }: SceneProps) {
             </ControlSection>
           )}
           <ControlSection
+            advanced
             title="认证实特征基"
             caption="显示顺序定义 P = (v₁, …, vₙ)，不计算 Jordan 形"
           >

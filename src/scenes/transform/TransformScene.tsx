@@ -706,6 +706,7 @@ export function TransformScene({ theme }: SceneProps) {
           </ControlSection>
 
           <ControlSection
+            advanced
             title="前后坐标基"
             caption="[T]C←B 通过 C A B⁻¹ 还原标准坐标映射"
           >
@@ -821,7 +822,7 @@ export function TransformScene({ theme }: SceneProps) {
             </div>
           </ControlSection>
 
-          <ControlSection title="变换读数">
+          <ControlSection advanced title="变换读数">
             <MetricList
               metrics={[
                 {

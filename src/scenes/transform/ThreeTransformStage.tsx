@@ -809,6 +809,34 @@ export const ThreeTransformStage = forwardRef<
     runtime.controls.update();
     renderNowRef.current();
   }, []);
+  const fitCamera = () => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const source = Math.max(1, Math.hypot(...vector));
+    const output = matrix.map((row) =>
+      row.reduce((sum, entry, index) => sum + entry * (vector[index] ?? 0), 0),
+    );
+    const radius =
+      Math.max(
+        source,
+        Math.hypot(...output),
+        ...matrix.map((row) => Math.hypot(...row)),
+      ) * 1.2;
+    const distance =
+      radius /
+      Math.sin(THREE.MathUtils.degToRad(runtime.camera.fov / 2)) /
+      Math.min(1, runtime.camera.aspect);
+    runtime.controls.maxDistance = Math.max(36, distance * 2);
+    runtime.camera.far = Math.max(100, distance * 4);
+    runtime.camera.position
+      .copy(runtime.homePosition)
+      .normalize()
+      .multiplyScalar(distance);
+    runtime.controls.target.set(0, 0, 0);
+    runtime.camera.updateProjectionMatrix();
+    runtime.controls.update();
+    renderNowRef.current();
+  };
   resetCameraRef.current = resetCamera;
 
   useImperativeHandle(
@@ -1174,6 +1202,14 @@ export const ThreeTransformStage = forwardRef<
           >
             <LocateFixed size={17} aria-hidden="true" />
           </IconButton>
+          <button
+            type="button"
+            className="text-button"
+            onClick={fitCamera}
+            disabled={Boolean(renderError)}
+          >
+            适配对象
+          </button>
           <IconButton
             label="导出 PNG"
             onClick={() => void exportPng()}

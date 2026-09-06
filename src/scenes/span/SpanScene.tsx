@@ -1,4 +1,12 @@
-import { lazy, Suspense, useCallback, useMemo, useRef } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { RotateCcw } from "lucide-react";
 import type { SceneProps } from "../../app/types";
 import type { Dimension, RealVector } from "../../math/nd";
@@ -108,6 +116,18 @@ export function SpanScene({ theme }: SceneProps) {
   const dragging = useRef<number | "target" | null>(null);
   const derived = useMemo(() => deriveSpan(state), [state]);
   const usesThree = state.dimension === 3;
+  const [hint, setHint] = useState(0);
+  const [challenge, setChallenge] = useState(false);
+  const [focus, setFocus] = useState<string | null>(null);
+  useEffect(() => {
+    const update = (event: Event) =>
+      setFocus((event as CustomEvent<string | null>).detail);
+    window.addEventListener("basis-focus", update);
+    return () => window.removeEventListener("basis-focus", update);
+  }, []);
+  const distance = Math.hypot(
+    ...derived.combination.map((value, i) => value - state.target[i]!),
+  );
 
   const replay = useCallback(() => {
     if (usesThree) threeStageRef.current?.replay();
@@ -203,8 +223,19 @@ export function SpanScene({ theme }: SceneProps) {
           drawVector(ctx, viewport, animated, {
             color,
             label: vectorLabel(index),
-            width: basisSet.has(index) ? 3 : 2,
-            alpha: basisSet.has(index) ? 1 : 0.72,
+            width:
+              focus === `vector-${index + 1}`
+                ? 4.5
+                : basisSet.has(index)
+                  ? 3
+                  : 2,
+            alpha:
+              focus && focus !== `vector-${index + 1}`
+                ? 0.25
+                : basisSet.has(index)
+                  ? 1
+                  : 0.72,
+            dash: index >= 4 ? [6, 3] : undefined,
           });
           drawPoint(
             ctx,
@@ -282,7 +313,7 @@ export function SpanScene({ theme }: SceneProps) {
         );
       }
     },
-    [derived.basisIndices, derived.rank, state, theme],
+    [derived.basisIndices, derived.rank, state, theme, focus],
   );
 
   const onPointerDown = useCallback(
@@ -491,6 +522,56 @@ export function SpanScene({ theme }: SceneProps) {
             title="组合与目标"
             caption="所有生成向量及其同序号系数都参与求和"
           >
+            <div className="challenge-card">
+              <strong>短实验 · 用向量到达目标</strong>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  setChallenge(true);
+                  setHint(0);
+                  setState({
+                    ...spanDefaults,
+                    vectors: [
+                      [1, 0],
+                      [0, 1],
+                    ],
+                    coefficients: [0, 0],
+                    target: [2, 1],
+                  });
+                }}
+              >
+                开始目标实验
+              </button>
+              {challenge && (
+                <>
+                  <p role="status">
+                    {distance < 0.03
+                      ? "已到达！再把两个生成向量改成共线，观察目标是否仍可达。"
+                      : `与目标距离 ${formatNumber(distance)}：调节下方系数。`}
+                  </p>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setHint(Math.min(2, hint + 1))}
+                  >
+                    逐步提示
+                  </button>
+                  {hint > 0 && (
+                    <p>
+                      先匹配目标的横坐标，再匹配纵坐标；合向量是所有系数乘向量之和。
+                    </p>
+                  )}
+                  {hint > 1 && (
+                    <p>
+                      {derived.targetInSpan
+                        ? `一组基坐标：${solutionText}（对应 ${basisText}）`
+                        : "目标不在当前张成空间；仅改变系数无法到达。"}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
             {state.coefficients.map((coefficient, index) => (
               <RangeField
                 key={index}
@@ -539,7 +620,7 @@ export function SpanScene({ theme }: SceneProps) {
               />
             </div>
           </ControlSection>
-          <ControlSection title="空间读数">
+          <ControlSection advanced title="空间读数">
             <MetricList
               metrics={[
                 {
@@ -570,7 +651,10 @@ export function SpanScene({ theme }: SceneProps) {
                 },
                 {
                   label: "target membership",
-                  value: solutionText,
+                  value:
+                    challenge && hint < 2
+                      ? "先调节系数；使用提示查看解"
+                      : solutionText,
                   key: "target-coordinates",
                   tone: derived.targetInSpan ? "blue" : "red",
                 },

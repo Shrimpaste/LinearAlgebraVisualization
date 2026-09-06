@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { linear } from "../../engine/easing";
+import { Prediction } from "../../components/ui/Prediction";
 import { RotateCcw } from "lucide-react";
 import type { SceneProps } from "../../app/types";
 import { addVec2, type Mat2, type Vec2 } from "../../math";
@@ -296,6 +297,15 @@ export function DeterminantScene({ theme }: SceneProps) {
           </ControlSection>
 
           <ControlSection title="列操作" caption="观察哪些操作改变行列式">
+            <details className="challenge-card">
+              <summary>先预测 · 加列会改变面积吗？</summary>
+              <Prediction
+                question="把第一列加到第二列，有向面积如何变化？"
+                options={["保持不变", "总是变大", "总是变号"]}
+                correct={0}
+                explanation="固定第一条边，第二条边沿它平移，底与高保持。点击下方加列检查整个过程。"
+              />
+            </details>
             <div
               className="current-frame-readout"
               aria-live="off"
@@ -366,7 +376,7 @@ export function DeterminantScene({ theme }: SceneProps) {
             </div>
           </ControlSection>
 
-          <ControlSection title="面积读数">
+          <ControlSection advanced title="面积读数">
             <MetricList
               metrics={[
                 {
