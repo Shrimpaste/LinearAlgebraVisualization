@@ -339,14 +339,20 @@ export function DecompositionScene({ theme }: SceneProps) {
       }
       formulaTone={formulaTone}
       insight={
-        derived.partialIsometry ? (
+        state.mode === "svd" && state.columns > state.rows ? (
           <>
-            <strong>Q 是部分等距映射（partial isometry）。</strong>{" "}
-            对矩形或秩亏矩阵，其零空间上的延拓并不唯一。
+            <strong>薄 Vᵀ 先投影到奇异方向坐标，Σ 伸缩，U 输出。</strong> R
+            {state.columns} → R{state.rows} 包含降维，零空间方向被压到零。
           </>
         ) : state.mode === "svd" ? (
           <>
-            <strong>Vᵀ 先对齐主方向，Σ 沿正交轴伸缩，U 再定向输出。</strong>
+            <strong>Vᵀ 提取主方向坐标，Σ 沿正交轴伸缩，U 输出。</strong>{" "}
+            奇异值为零时，相应方向被压到零。
+          </>
+        ) : derived.partialIsometry ? (
+          <>
+            <strong>Q 是部分等距映射（partial isometry）。</strong>{" "}
+            对矩形或秩亏矩阵，其零空间上的延拓并不唯一。
           </>
         ) : (
           <>
@@ -482,7 +488,7 @@ export function DecompositionScene({ theme }: SceneProps) {
               onSelect={selectPreset}
             />
             <Notice tone="info">
-              模块 7 严格使用实数域，不将复数分量静默丢弃。
+              支持 1–3 维实矩阵；可比较 SVD 与右极分解的作用路径。
             </Notice>
           </ControlSection>
 
@@ -548,7 +554,7 @@ export function DecompositionScene({ theme }: SceneProps) {
                 <code>{formatRealVector(derived.svd.singularValues)}</code>
               </div>
             )}
-            {derived.partialIsometry && (
+            {state.mode === "polar" && derived.partialIsometry && (
               <Notice tone="warning">
                 Q 是 partial isometry；矩形或秩亏情形下该因子并不唯一。
               </Notice>

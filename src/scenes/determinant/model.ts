@@ -2,6 +2,8 @@ import {
   columnsOfMat2,
   determinantMat2,
   rankMat2,
+  IDENTITY_MAT2,
+  interpolateMat2,
   type Mat2,
 } from "../../math";
 
@@ -10,6 +12,27 @@ export interface DeterminantState {
   showSource: boolean;
   showGrid: boolean;
   showSweep: boolean;
+  animationFrom?: Mat2;
+  animationKind?: "linear" | "rotation";
+  operation?: string;
+}
+
+/** The displayed matrix, distinct from the final target matrix. */
+export function determinantFrame(
+  state: DeterminantState,
+  progress: number,
+): Mat2 {
+  const t = Math.max(0, Math.min(1, progress));
+  if (state.animationKind === "rotation") {
+    const angle = Math.atan2(state.matrix[2], state.matrix[0]) * t;
+    return [
+      Math.cos(angle),
+      -Math.sin(angle),
+      Math.sin(angle),
+      Math.cos(angle),
+    ];
+  }
+  return interpolateMat2(state.animationFrom ?? IDENTITY_MAT2, state.matrix, t);
 }
 
 export const determinantDefaults: DeterminantState = {
