@@ -12,6 +12,7 @@ export const experimentScenes: readonly SceneId[] = [
   "determinant",
   "operator",
   "decomposition",
+  "systems",
 ];
 export interface Experiment {
   format: "basis-lab-experiment";
@@ -59,6 +60,10 @@ function requireValid(ok: unknown, message: string): asserts ok {
 
 export async function sceneCodec(scene: SceneId) {
   switch (scene) {
+    case "systems": {
+      const m = await import("../scenes/systems/model");
+      return { defaults: m.systemsDefaults, migrate: m.migrateSystemsState };
+    }
     case "transform": {
       const m = await import("../scenes/transform/model");
       return {
@@ -157,7 +162,11 @@ export async function validateExperiment(input: unknown): Promise<Experiment> {
         "旋转路径要求目标是旋转矩阵。",
       );
     }
-  } else if (scene === "transform" || scene === "decomposition") {
+  } else if (
+    scene === "transform" ||
+    scene === "decomposition" ||
+    scene === "systems"
+  ) {
     requireValid(
       dim(state.rows) && dim(state.columns),
       "输入与输出维数必须为1–3。",
@@ -166,6 +175,11 @@ export async function validateExperiment(input: unknown): Promise<Experiment> {
       matrix(state.matrix, state.rows, state.columns),
       "矩阵形状或数值无效。",
     );
+    if (scene === "systems")
+      requireValid(
+        vector(state.b, state.rows) && vector(state.parameters, 3),
+        "目标或自由参数无效。",
+      );
     if (scene === "transform") {
       requireValid(
         vector(state.vector, state.columns) &&
@@ -334,7 +348,7 @@ export async function transferExperiment(
       [a[0]!, a[1]!],
       [a[2]!, a[3]!],
     ];
-  } else if (source.scene === "decomposition") {
+  } else if (source.scene === "decomposition" || source.scene === "systems") {
     physical = (source.state as { matrix: RealMatrix }).matrix;
   } else if (source.scene === "operator") {
     const a = (source.state as { matrix: { re: number; im: number }[][] })
@@ -352,7 +366,16 @@ export async function transferExperiment(
     columns = physical[0]!.length;
   const codec = await sceneCodec(target);
   let state: unknown;
-  if (target === "transform" || target === "decomposition") {
+  if (target === "systems") {
+    state = {
+      ...codec.defaults,
+      rows,
+      columns,
+      matrix: physical,
+      b: Array(rows).fill(1),
+      parameters: [0, 0, 0],
+    };
+  } else if (target === "transform" || target === "decomposition") {
     const model =
       target === "transform" ? await import("../scenes/transform/model") : null;
     if (model)

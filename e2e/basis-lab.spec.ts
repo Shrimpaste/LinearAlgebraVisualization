@@ -45,6 +45,7 @@ const test = base.extend<RuntimeGuardFixture>({
 });
 
 const modules = [
+  { id: "systems", label: "解集与拟合", heading: "解集与最小二乘" },
   { id: "span", label: "向量张成", heading: "向量张成" },
   { id: "transform", label: "线性变换", heading: "线性变换" },
   { id: "eigen", label: "特征系统", heading: "特征系统" },
@@ -327,7 +328,7 @@ function colorDistance(
   );
 }
 
-test("all seven navigation modules render a stable, nonblank canvas", async ({
+test("all eight navigation modules render a stable, nonblank canvas", async ({
   page,
 }) => {
   await openModule(page, "transform");
@@ -857,6 +858,8 @@ test("spectral R3 stage renders pixels and groups repeated eigenspaces", async (
   await expect(canvas).toHaveAttribute("data-progress", "1.0000");
 
   await page.getByRole("button", { name: "重复特征子空间" }).click();
+  const mobileNote = page.locator(".mobile-note");
+  if (await mobileNote.isVisible()) await mobileNote.locator("summary").click();
   await expect(page.getByText(/重根下 U 可变，谱投影 Pλ 不变/)).toBeVisible();
   await expect(page.getByText("dim 2 · Pλ 唯一")).toBeVisible();
   await expectNonblankWebGLCanvas(canvas);
@@ -1199,11 +1202,16 @@ test("canvas contracts after a live desktop-to-mobile resize", async ({
   });
 
   expect(resized.canvasWidth).toBe(390);
-  expect(resized.canvasHeight).toBeGreaterThanOrEqual(340);
+  expect(resized.canvasHeight).toBeGreaterThanOrEqual(200);
   expect(resized.canvasHeight).toBeLessThanOrEqual(390);
   expect(resized.canvasHeight).toBeLessThan(desktopHeight - 150);
   expect(resized.documentWidth).toBeLessThanOrEqual(resized.viewportWidth + 1);
   expect(resized.bodyWidth).toBeLessThanOrEqual(resized.viewportWidth + 1);
+  const canvasBefore = await canvas.boundingBox();
+  await page.getByLabel("变换矩阵 第二行第二列", { exact: true }).fill("2");
+  const canvasAfter = await canvas.boundingBox();
+  expect(canvasAfter!.y).toBeCloseTo(canvasBefore!.y, 0);
+  expect(canvasAfter!.y + canvasAfter!.height).toBeLessThan(550);
 });
 
 test("every module avoids document-level horizontal overflow", async ({

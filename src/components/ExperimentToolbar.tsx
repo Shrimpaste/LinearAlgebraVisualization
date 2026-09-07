@@ -18,6 +18,7 @@ import {
 import { IconButton } from "./ui/IconButton";
 
 const destinations: { value: SceneId; label: string }[] = [
+  { value: "systems", label: "解集与最小二乘" },
   { value: "transform", label: "线性变换" },
   { value: "determinant", label: "行列式" },
   { value: "eigen", label: "特征系统" },
@@ -37,22 +38,57 @@ async function teachingCard(scene: SceneId) {
   const source = root?.querySelector("canvas");
   if (!source) throw new Error("画布尚未就绪。");
   const experiment = captureExperiment(scene);
+  const parameterLabels: Record<string, string> = {
+    matrix: "矩阵 A",
+    secondMatrix: "第二步矩阵",
+    vector: "测试向量",
+    vectors: "生成向量组",
+    coefficients: "组合系数",
+    b: "目标 b",
+    target: "目标向量",
+    parameters: "自由参数",
+    probe: "候选方向",
+    basis: "共享坐标基",
+    domainBasis: "定义域基",
+    codomainBasis: "陪域基",
+    metric: "度量矩阵 G",
+    first: "向量 u",
+    second: "向量 v",
+    mode: "实验模式",
+    field: "标量域",
+  };
   const text = [
     root?.querySelector("h1")?.textContent ?? scene,
     root?.querySelector(".formula-readout")?.textContent ?? "",
     `当前进度 ${Math.round((experiment.view?.progress ?? 1) * 100)}% · 图形为当前态，参数定义目标实验`,
-    ...Object.entries(experiment.state as Record<string, unknown>).map(
-      ([key, value]) => `${key}: ${JSON.stringify(value)}`,
-    ),
+    ...Object.entries(experiment.state as Record<string, unknown>)
+      .filter(([key]) => key in parameterLabels)
+      .map(
+        ([key, value]) => `${parameterLabels[key]}: ${JSON.stringify(value)}`,
+      ),
+    root?.querySelector(".insight-strip > div, .mobile-note p")?.textContent ??
+      "",
   ];
   const canvas = document.createElement("canvas");
-  const lines = text.flatMap((line) => line.match(/.{1,78}/gu) ?? [""]);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("无法生成图卡。");
+  ctx.font = '14px "Microsoft YaHei", monospace';
+  const lines = text.flatMap((paragraph) => {
+    const wrapped: string[] = [];
+    let line = "";
+    for (const char of paragraph) {
+      if (ctx.measureText(line + char).width > 1000) {
+        wrapped.push(line);
+        line = "";
+      }
+      line += char;
+    }
+    return [...wrapped, line];
+  });
   const width = 1100,
     imageHeight = Math.round((source.height / source.width) * 1000);
   canvas.width = width;
   canvas.height = imageHeight + 90 + lines.length * 24;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("无法生成图卡。");
   ctx.fillStyle = "#f4f6f4";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#171b1a";

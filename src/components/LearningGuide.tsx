@@ -5,6 +5,17 @@ const guides: Record<
   SceneId,
   { question: string; prerequisite: string; steps: string[]; transfer: string }
 > = {
+  systems: {
+    question: "无法到达时，最近的点在哪里？",
+    prerequisite: "列空间、正交投影与零空间",
+    steps: [
+      "预测：目标不在列空间内，Ax=b还能有解吗？",
+      "比较唯一解、无穷多解与无精确解预设。",
+      "改变自由参数，观察x变化而Ax与残差保持不变。",
+      "最小二乘把b投影到列空间，最小范数解再去掉零空间分量。",
+    ],
+    transfer: "A的列相关时，最小二乘解为什么也可能不唯一？",
+  },
   span: {
     question: "这些方向能到达目标吗？",
     prerequisite: "向量加法与数乘",

@@ -1,10 +1,26 @@
 import { lazy } from "react";
 import type { SceneMeta } from "./types";
-import { DeterminantScene } from "../scenes/determinant/DeterminantScene";
-import { EigenScene } from "../scenes/eigen/EigenScene";
-import { InnerProductScene } from "../scenes/inner-product/InnerProductScene";
-import { SpanScene } from "../scenes/span/SpanScene";
-import { TransformScene } from "../scenes/transform/TransformScene";
+const DeterminantScene = lazy(() =>
+  import("../scenes/determinant/DeterminantScene").then((m) => ({
+    default: m.DeterminantScene,
+  })),
+);
+const EigenScene = lazy(() =>
+  import("../scenes/eigen/EigenScene").then((m) => ({ default: m.EigenScene })),
+);
+const InnerProductScene = lazy(() =>
+  import("../scenes/inner-product/InnerProductScene").then((m) => ({
+    default: m.InnerProductScene,
+  })),
+);
+const SpanScene = lazy(() =>
+  import("../scenes/span/SpanScene").then((m) => ({ default: m.SpanScene })),
+);
+const TransformScene = lazy(() =>
+  import("../scenes/transform/TransformScene").then((m) => ({
+    default: m.TransformScene,
+  })),
+);
 
 const OperatorScene = lazy(() =>
   import("../scenes/operator/OperatorScene").then((module) => ({
@@ -17,6 +33,11 @@ const DecompositionScene = lazy(() =>
   })),
 );
 
+const SystemsScene = lazy(() =>
+  import("../scenes/systems/SystemsScene").then((m) => ({
+    default: m.SystemsScene,
+  })),
+);
 export const scenes: readonly SceneMeta[] = [
   {
     id: "span",
@@ -73,6 +94,14 @@ export const scenes: readonly SceneMeta[] = [
     shortLabel: "SVD / 极",
     subtitle: "拆解主方向、伸缩与定向",
     component: DecompositionScene,
+  },
+  {
+    id: "systems",
+    index: "08",
+    label: "解集与拟合",
+    shortLabel: "Ax=b",
+    subtitle: "从精确解到最小二乘",
+    component: SystemsScene,
   },
 ] as const;
 

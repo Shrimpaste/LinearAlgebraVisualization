@@ -129,7 +129,8 @@ export function App() {
     const activeButton = navigation?.querySelector<HTMLElement>(
       `[data-scene-id="${activeScene}"]`,
     );
-    if (navigation && activeButton) {
+    const centerNavigation = () => {
+      if (!navigation || !activeButton) return;
       const navigationRect = navigation.getBoundingClientRect();
       const activeRect = activeButton.getBoundingClientRect();
       const activeCenter =
@@ -151,7 +152,10 @@ export function App() {
         top: navigation.scrollTop,
         behavior: "auto",
       });
-    }
+    };
+    centerNavigation();
+    const navigationObserver = new ResizeObserver(centerNavigation);
+    if (navigation) navigationObserver.observe(navigation);
 
     let restoreFrame = 0;
     let contentObserver: MutationObserver | null = null;
@@ -184,6 +188,7 @@ export function App() {
     }
 
     return () => {
+      navigationObserver.disconnect();
       contentObserver?.disconnect();
       window.cancelAnimationFrame(restoreFrame);
     };

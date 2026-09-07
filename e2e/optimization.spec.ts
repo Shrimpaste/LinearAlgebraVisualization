@@ -1,4 +1,71 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+
+test("solution families preserve fitted points and connect exact to least squares", async ({
+  page,
+}) => {
+  await page.goto("/#systems");
+  const result = (key: string) => page.locator(`[data-result="${key}"]`);
+  await expect(result("solution-status")).toHaveText(
+    "无精确解 · 多个最小二乘解",
+  );
+  const before = await result("current-solution").textContent();
+  const distance = await result("residual").textContent();
+  await page
+    .getByRole("slider", { name: "自由参数 t1", exact: true })
+    .fill("2");
+  await expect(result("current-solution")).not.toHaveText(before!);
+  await expect(result("residual")).toHaveText(distance!);
+  await page.getByRole("button", { name: "无穷多解", exact: true }).click();
+  await expect(result("solution-status")).toHaveText("无穷多个精确解");
+  await page.getByRole("button", { name: "唯一解", exact: true }).click();
+  await expect(result("current-solution")).toHaveText("(2, 1)");
+  await expect(
+    page.getByRole("slider", { name: "自由参数 t1", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "三维拟合", exact: true }).click();
+  await expect(result("solution-status")).toHaveText(
+    "无精确解 · 唯一最小二乘解",
+  );
+  await expect(result("minimum-solution")).toHaveText("(2)");
+  await expect(page.locator("canvas")).toBeVisible();
+});
+
+test("named snapshots restore state and teaching cards contain a real PNG", async ({
+  page,
+}) => {
+  await page.goto("/#systems");
+  await page.getByText("实验快照、导出与跨模块", { exact: true }).click();
+  await page.getByLabel("快照名称").fill("最小二乘课堂");
+  await page.getByRole("button", { name: "保存快照", exact: true }).click();
+  await page.getByRole("button", { name: "唯一解", exact: true }).click();
+  await page.getByRole("button", { name: "载入", exact: true }).click();
+  await expect(page.locator('[data-result="solution-status"]')).toHaveText(
+    "无精确解 · 多个最小二乘解",
+  );
+  await page.getByText("实验快照、导出与跨模块", { exact: true }).click();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出教学图卡", exact: true }).click();
+  const download = await downloadPromise;
+  const bytes = await readFile((await download.path())!);
+  expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+  expect(bytes.readUInt32BE(16)).toBe(1100);
+  expect(bytes.length).toBeGreaterThan(10000);
+});
+
+test("matrix transfer opens the same physical map in the solver", async ({
+  page,
+}) => {
+  await page.goto("/#transform");
+  await page.getByLabel("变换矩阵 第一行第一列", { exact: true }).fill("4");
+  await page.getByText("实验快照、导出与跨模块", { exact: true }).click();
+  await page.getByLabel("携带当前实际映射到").selectOption("systems");
+  await page.getByRole("button", { name: "带入矩阵", exact: true }).click();
+  await expect(page).toHaveURL(/#systems$/);
+  await expect(
+    page.getByLabel("方程矩阵 第一行第一列", { exact: true }),
+  ).toHaveValue("4");
+});
 
 test("eigen playback changes geometry and retains a real rotation counterexample", async ({
   page,

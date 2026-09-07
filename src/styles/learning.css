@@ -383,3 +383,47 @@
     display: none;
   }
 }
+
+/* Three-dimensional stages share the same readable transport layout. */
+:is(
+    .three-span-stage,
+    .three-inner-product-stage,
+    .three-operator-stage,
+    .three-transform-stage
+  )
+  .visualization-stage__transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 48px;
+  padding: 6px 12px;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+}
+:is(
+    .three-span-stage,
+    .three-inner-product-stage,
+    .three-operator-stage,
+    .three-transform-stage
+  )
+  .visualization-stage__scrubber {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--cyan);
+}
+:is(
+    .three-span-stage,
+    .three-inner-product-stage,
+    .three-operator-stage,
+    .three-transform-stage
+  )
+  .visualization-stage__transport
+  output {
+  font-size: 12px;
+  min-width: 36px;
+}
+.nullspace-vector {
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
