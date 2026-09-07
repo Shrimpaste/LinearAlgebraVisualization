@@ -170,6 +170,91 @@
 .mobile-note {
   display: none;
 }
+.experiment-toolbar {
+  padding: 6px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.experiment-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.experiment-quick-actions > span {
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+.experiment-toolbar summary {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 0;
+}
+.experiment-actions {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+.experiment-actions label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.experiment-actions input,
+.experiment-actions select {
+  min-width: 0;
+  width: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  min-height: 38px;
+  padding: 8px;
+}
+.experiment-actions small {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.experiment-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.snapshot-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+.snapshot-row span {
+  overflow-wrap: anywhere;
+}
+.experiment-message {
+  font-size: 13px;
+  color: var(--cyan);
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+.app-notice {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 50;
+  max-width: calc(100vw - 32px);
+  background: var(--paper-raised);
+  border: 1px solid var(--cyan);
+  box-shadow: 0 4px 20px var(--shadow);
+  padding: 12px;
+  font-size: 14px;
+}
+.app-notice button {
+  margin-left: 12px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
 @media (min-width: 761px) and (max-width: 1100px) {
   :root {
     --inspector-width: 340px;

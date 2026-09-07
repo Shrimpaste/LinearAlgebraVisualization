@@ -21,6 +21,7 @@ import { AnimationTimeline, type TimelineSnapshot } from "../../engine";
 import type { Dimension, RealMatrix, RealVector } from "../../math/nd";
 import { getCanvasPalette, type CanvasPalette } from "../../rendering";
 import { IconButton } from "../../components/ui/IconButton";
+import { registerStage } from "../../app/stageSession";
 
 export interface ThreeTransformStageHandle {
   replay(): void;
@@ -838,6 +839,30 @@ export const ThreeTransformStage = forwardRef<
     renderNowRef.current();
   };
   resetCameraRef.current = resetCamera;
+  useEffect(
+    () =>
+      registerStage(mountRef.current, {
+        capture: () => ({
+          progress: timeline.getSnapshot().progress,
+          speed: timeline.getSnapshot().speed,
+          camera: runtimeRef.current?.camera.position.toArray(),
+          target: runtimeRef.current?.controls.target.toArray(),
+        }),
+        restore: (view) => {
+          timeline.pause();
+          if (view.speed) timeline.setSpeed(view.speed);
+          timeline.seek(view.progress);
+          const runtime = runtimeRef.current;
+          if (runtime && view.camera && view.target) {
+            runtime.camera.position.fromArray(view.camera);
+            runtime.controls.target.fromArray(view.target);
+            runtime.controls.update();
+            renderNowRef.current();
+          }
+        },
+      }),
+    [timeline],
+  );
 
   useImperativeHandle(
     forwardedRef,

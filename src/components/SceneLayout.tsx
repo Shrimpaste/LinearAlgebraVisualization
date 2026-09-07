@@ -6,6 +6,7 @@ import { useLocalStorage } from "../hooks/useLocalStorage";
 import { LearningGuide } from "./LearningGuide";
 import { SegmentedControl } from "./ui/SegmentedControl";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { ExperimentToolbar } from "./ExperimentToolbar";
 
 interface SceneLayoutProps {
   id: SceneId;
@@ -79,6 +80,7 @@ export function SceneLayout({
               ]}
             />
           </div>
+          <ExperimentToolbar scene={id} />
           {mode === "guided" && <LearningGuide key={id} scene={id} />}
           {isMobile && (
             <details className="mobile-note">
