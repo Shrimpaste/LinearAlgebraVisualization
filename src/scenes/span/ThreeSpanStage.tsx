@@ -30,6 +30,7 @@ export interface ThreeSpanStageHandle {
 
 interface Props {
   solutionMode?: boolean;
+  columnBasis?: readonly RealVector[];
   vectors: readonly RealVector[];
   coefficients: readonly number[];
   basisIndices: readonly number[];
@@ -263,7 +264,9 @@ function buildContent(props: Props, palette: CanvasPalette): Content {
   const root = new THREE.Group();
   addAxes(root, palette);
   const colors = [palette.cyan, palette.yellow, palette.blue, palette.red];
-  const basis = props.basisIndices.map((index) => props.vectors[index]!);
+  const basis =
+    props.columnBasis ??
+    props.basisIndices.map((index) => props.vectors[index]!);
   addRankGeometry(root, basis, props.rank, palette.cyan);
   const basisSet = new Set(props.basisIndices);
   const generators = props.vectors.map((vector, index) => {
@@ -601,6 +604,7 @@ export const ThreeSpanStage = forwardRef<ThreeSpanStageHandle, Props>(
         {
           vectors: props.vectors,
           solutionMode: props.solutionMode,
+          columnBasis: props.columnBasis,
           coefficients: props.coefficients,
           basisIndices: props.basisIndices,
           rank: props.rank,
@@ -617,6 +621,7 @@ export const ThreeSpanStage = forwardRef<ThreeSpanStageHandle, Props>(
     }, [
       props.basisIndices,
       props.solutionMode,
+      props.columnBasis,
       props.coefficients,
       props.exportFilename,
       props.rank,

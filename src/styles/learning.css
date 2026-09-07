@@ -1,4 +1,32 @@
 /* Learning layer: quiet paper, readable mathematics, one visible operation. */
+.precision-details {
+  grid-column: 1 / -1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.precision-details summary {
+  cursor: pointer;
+}
+.precision-details code {
+  display: block;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+  line-height: 1.7;
+}
+.dimension-label {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+.operator-lesson-rail__steps small,
+.three-operator-stage__legend span {
+  font-size: 11px;
+}
+.operator-lesson-rail__steps strong {
+  font-size: 12px;
+}
 :root {
   --inspector-width: 380px;
 }

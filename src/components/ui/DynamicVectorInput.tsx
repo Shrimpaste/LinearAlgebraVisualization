@@ -1,4 +1,5 @@
 import { NumberField } from "./NumberField";
+import { PrecisionDetails } from "./PrecisionDetails";
 import type { DynamicInputDimension } from "./DynamicMatrixInput";
 
 export interface DynamicVectorValue {
@@ -76,6 +77,7 @@ export function DynamicVectorInput({
           />
         );
       })}
+      {disabled && <PrecisionDetails values={entries} />}
     </div>
   );
 }

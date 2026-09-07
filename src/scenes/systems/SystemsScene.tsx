@@ -49,23 +49,10 @@ export function SystemsScene({ theme }: SceneProps) {
       ),
     [state.matrix, state.columns],
   );
-  const basisIndices = useMemo(() => {
-    const basis: number[][] = [],
-      indices: number[] = [];
-    vectors.forEach((v, index) => {
-      let next = [...v];
-      for (const q of basis) {
-        const dot = q.reduce((sum, x, i) => sum + x * next[i]!, 0);
-        next = next.map((x, i) => x - dot * q[i]!);
-      }
-      const length = Math.hypot(...next);
-      if (length > 1e-9 * Math.max(...vectors.map((v) => Math.hypot(...v)))) {
-        basis.push(next.map((x) => x / length));
-        indices.push(index);
-      }
-    });
-    return indices;
-  }, [vectors]);
+  const basisIndices = useMemo(
+    () => Array.from({ length: d.rank }, (_, i) => i),
+    [d.rank],
+  );
   const render = useCallback(
     ({
       ctx,
@@ -81,7 +68,7 @@ export function SystemsScene({ theme }: SceneProps) {
       drawAxes(ctx, viewport, p);
       const xy = (v: readonly number[]): Vec2 => [v[0] ?? 0, v[1] ?? 0];
       if (d.rank === 1)
-        drawInfiniteLine(ctx, viewport, xy(vectors[basisIndices[0] ?? 0]!), {
+        drawInfiniteLine(ctx, viewport, xy(d.columnBasis[0]!), {
           color: p.cyan,
           width: 12,
           alpha: 0.12,
@@ -117,7 +104,7 @@ export function SystemsScene({ theme }: SceneProps) {
         dash: [5, 4],
       });
     },
-    [theme, d, vectors, basisIndices, state.b],
+    [theme, d, vectors, state.b],
   );
   const changeDimension = (key: "rows" | "columns", value: string) =>
     setState(
@@ -152,6 +139,7 @@ export function SystemsScene({ theme }: SceneProps) {
             fallback={<div className="stage-loading">正在装载三维空间…</div>}
           >
             <ThreeSpanStage
+              columnBasis={d.columnBasis}
               solutionMode
               vectors={vectors}
               coefficients={d.solution}
@@ -185,12 +173,14 @@ export function SystemsScene({ theme }: SceneProps) {
             title="问题与维数"
             caption="列数是未知数个数，行数是方程个数。"
           >
+            <p className="dimension-label">方程个数 m · 陪域维数</p>
             <SegmentedControl
               label="方程个数"
               value={String(state.rows)}
               options={dimensions}
               onChange={(v) => changeDimension("rows", v)}
             />
+            <p className="dimension-label">未知数个数 n · 定义域维数</p>
             <SegmentedControl
               label="未知数个数"
               value={String(state.columns)}

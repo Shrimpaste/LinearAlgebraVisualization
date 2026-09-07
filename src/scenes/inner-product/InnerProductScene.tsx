@@ -714,6 +714,7 @@ export function InnerProductScene({ theme }: SceneProps) {
         drawVector(ctx, viewport, projectionPoint, {
           color: palette.yellow,
           label: "projᵥu",
+          labelOffset: [8, 20],
           width: 2.8,
         });
         drawLine(ctx, viewport, projectionPoint, residualEnd, {

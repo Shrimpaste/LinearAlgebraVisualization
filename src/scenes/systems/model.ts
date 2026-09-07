@@ -101,6 +101,9 @@ export function deriveSystems(state: SystemsState) {
   );
   return {
     rank: svd.rank,
+    columnBasis: Array.from({ length: svd.rank }, (_, k) =>
+      svd.U.map((row) => row[k]!),
+    ),
     minimum,
     nullspace,
     solution,

@@ -450,7 +450,9 @@ export function TransformScene({ theme }: SceneProps) {
         " · 自定义矩阵、前后基与顺序复合"
       }
       formulaLabel={
-        derived.compositionEnabled ? "标准坐标复合 T₂ ∘ T₁" : "标准坐标映射"
+        derived.compositionEnabled
+          ? "目标标准坐标复合 T₂ ∘ T₁"
+          : "目标标准坐标映射"
       }
       formula={
         <>

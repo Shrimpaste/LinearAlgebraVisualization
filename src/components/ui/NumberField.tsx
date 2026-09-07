@@ -4,6 +4,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
+import { formatReadoutNumber } from "../../utils/format";
 
 interface NumberFieldProps {
   label: string;
@@ -115,7 +116,7 @@ export function NumberField({
         aria-valuenow={isCompleteNumber(draft) ? Number(draft) : undefined}
         aria-valuemin={min}
         aria-valuemax={max}
-        value={draft}
+        value={disabled ? formatReadoutNumber(value) : draft}
         title={`完整数值：${value}`}
         onChange={handleChange}
         onBlur={commitDraft}

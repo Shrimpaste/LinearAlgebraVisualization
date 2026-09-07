@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { NumberField } from "./NumberField";
+import { PrecisionDetails } from "./PrecisionDetails";
 
 export type DynamicInputDimension = 1 | 2 | 3;
 
@@ -98,6 +99,7 @@ export function DynamicMatrixInput({
         aria-hidden="true"
         style={{ alignSelf: "stretch", height: "auto" }}
       />
+      {disabled && <PrecisionDetails values={entries} />}
     </div>
   );
 }
