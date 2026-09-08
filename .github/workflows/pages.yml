@@ -35,6 +35,19 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run full acceptance suite
         run: npm run verify:full
+      - name: Preserve browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-diagnostics-${{ github.workflow }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Record release provenance
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const pkg=JSON.parse(fs.readFileSync("package.json","utf8")); fs.writeFileSync("dist/release.json",JSON.stringify({version:pkg.version,sha:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID})+"\n");'
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
       - name: Upload static artifact

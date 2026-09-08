@@ -4,7 +4,7 @@
 [![GitHub Pages](https://github.com/Shrimpaste/LinearAlgebraVisualization/actions/workflows/pages.yml/badge.svg)](https://github.com/Shrimpaste/LinearAlgebraVisualization/actions/workflows/pages.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f3437.svg)](LICENSE)
 
-当前部署候选：`v1.2.0-beta.3` · **待进一步测试优化**。核心功能与自动化验收已完成，此版本作为预发布阶段继续收集真实浏览器、复杂数值边界与长期交互反馈。
+当前部署候选：`v1.2.0-beta.4` · **待进一步测试优化**。核心功能与自动化验收已完成，此版本作为预发布阶段继续收集真实浏览器、复杂数值边界与长期交互反馈。
 
 基域是一套覆盖 `R/C` 与 1–3 维实验的交互式线性代数工作台。它把矩阵、向量组、基、内积和分解放回同一个可操作空间：直接编辑数值，逐帧观察单步或复合变换，并用残差证书读取奇异、非正规、非正定等边界状态。
 
