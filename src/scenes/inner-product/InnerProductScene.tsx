@@ -262,6 +262,22 @@ function drawComplexComponents(
   const count = first.length;
   for (let index = 0; index < count; index += 1) {
     const origin = complexComponentOrigin(index, count);
+    drawLabel(
+      frame.ctx,
+      frame.viewport,
+      [origin[0] + 1.05, origin[1]],
+      "Re",
+      palette.textSoft,
+      [-8, 18],
+    );
+    drawLabel(
+      frame.ctx,
+      frame.viewport,
+      [origin[0], origin[1] + 1.05],
+      "Im",
+      palette.textSoft,
+      [6, 0],
+    );
     drawLine(
       frame.ctx,
       frame.viewport,
@@ -310,7 +326,7 @@ function drawComplexComponents(
       frame.ctx,
       frame.viewport,
       [origin[0], origin[1] - 1.18],
-      "z" + String(index + 1),
+      `分量 ${index + 1} · |u|=${formatNumber(Math.hypot(u.re, u.im))} · 相位 ${formatNumber((Math.atan2(u.im, u.re) * 180) / Math.PI)}°`,
       palette.textSoft,
       [0, 0],
     );
@@ -698,6 +714,7 @@ export function InnerProductScene({ theme }: SceneProps) {
         drawVector(ctx, viewport, projectionPoint, {
           color: palette.yellow,
           label: "projᵥu",
+          labelOffset: [8, 20],
           width: 2.8,
         });
         drawLine(ctx, viewport, projectionPoint, residualEnd, {
@@ -1124,11 +1141,11 @@ export function InnerProductScene({ theme }: SceneProps) {
             )}
           </ControlSection>
 
-          <ControlSection title="四条合法性条件">
+          <ControlSection advanced title="四条合法性条件">
             <AxiomChecklist label="内积公理验证" items={axiomItems} />
           </ControlSection>
 
-          <ControlSection title="内积读数">
+          <ControlSection advanced title="内积读数">
             <MetricList
               metrics={[
                 {

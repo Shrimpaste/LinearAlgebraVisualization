@@ -1,3 +1,4 @@
+import { registerStage } from "../../app/stageSession";
 import {
   Download,
   LocateFixed,
@@ -448,6 +449,31 @@ export const ThreeInnerProductStage = forwardRef<
     });
   }
   const timeline = timelineRef.current;
+  useEffect(
+    () =>
+      registerStage(mountRef.current, {
+        capture: () => ({
+          progress: timeline.getSnapshot().progress,
+          speed: timeline.getSnapshot().speed,
+          camera: runtimeRef.current?.camera.position.toArray(),
+          target: runtimeRef.current?.controls.target.toArray(),
+        }),
+        restore: (view) => {
+          timeline.pause();
+          if (view.speed) timeline.setSpeed(view.speed);
+          timeline.seek(view.progress);
+          const runtime = runtimeRef.current;
+          if (runtime && view.camera && view.target) {
+            runtime.camera.position.fromArray(view.camera);
+            runtime.controls.target.fromArray(view.target);
+            runtime.controls.update();
+            runtime.renderer.render(runtime.scene, runtime.camera);
+          }
+        },
+      }),
+    [timeline],
+  );
+
   const [snapshot, setSnapshot] = useState<TimelineSnapshot>(() =>
     timeline.getSnapshot(),
   );

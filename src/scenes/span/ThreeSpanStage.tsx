@@ -1,3 +1,4 @@
+import { registerStage } from "../../app/stageSession";
 import {
   Download,
   LocateFixed,
@@ -28,6 +29,8 @@ export interface ThreeSpanStageHandle {
 }
 
 interface Props {
+  solutionMode?: boolean;
+  columnBasis?: readonly RealVector[];
   vectors: readonly RealVector[];
   coefficients: readonly number[];
   basisIndices: readonly number[];
@@ -46,6 +49,7 @@ interface Runtime {
 }
 
 interface ArrowItem {
+  labelFraction?: number;
   arrow: THREE.ArrowHelper;
   label: THREE.Sprite | null;
   vector: THREE.Vector3;
@@ -54,6 +58,7 @@ interface ArrowItem {
 }
 
 interface Content {
+  residual?: ArrowItem;
   root: THREE.Group;
   generators: ArrowItem[];
   contributions: ArrowItem[];
@@ -127,7 +132,11 @@ function setArrow(item: ArrowItem, progress: number) {
     item.label.visible = item.arrow.visible;
     item.label.position
       .copy(item.origin)
-      .add(item.vector.clone().multiplyScalar(progress));
+      .add(
+        item.vector
+          .clone()
+          .multiplyScalar(progress * (item.labelFraction ?? 1)),
+      );
     item.label.position.y += 0.15;
   }
 }
@@ -255,16 +264,20 @@ function buildContent(props: Props, palette: CanvasPalette): Content {
   const root = new THREE.Group();
   addAxes(root, palette);
   const colors = [palette.cyan, palette.yellow, palette.blue, palette.red];
-  const basis = props.basisIndices.map((index) => props.vectors[index]!);
+  const basis =
+    props.columnBasis ??
+    props.basisIndices.map((index) => props.vectors[index]!);
   addRankGeometry(root, basis, props.rank, palette.cyan);
   const basisSet = new Set(props.basisIndices);
   const generators = props.vectors.map((vector, index) => {
-    const color = colors[index % colors.length]!;
+    const color = props.solutionMode
+      ? palette.neutral
+      : colors[index % colors.length]!;
     const item = makeArrow(
       vector3(vector),
       new THREE.Vector3(),
       color,
-      `v${index + 1}`,
+      `${props.solutionMode ? "a" : "v"}${index + 1}`,
       index * 0.07,
     );
     const lineMaterial = item.arrow.line.material as THREE.Material;
@@ -277,27 +290,35 @@ function buildContent(props: Props, palette: CanvasPalette): Content {
     if (item.label) root.add(item.label);
     return item;
   });
-  let origin = new THREE.Vector3();
-  const contributions = props.vectors.map((vector, index) => {
-    const contribution = vector3(vector).multiplyScalar(
-      props.coefficients[index] ?? 0,
-    );
-    const item = makeArrow(
-      contribution,
-      origin.clone(),
-      colors[index % colors.length]!,
-      `c${index + 1}v${index + 1}`,
-    );
-    origin = origin.clone().add(contribution);
-    root.add(item.arrow);
-    if (item.label) root.add(item.label);
-    return item;
-  });
+  let origin = props.solutionMode
+    ? props.vectors.reduce(
+        (sum, v, i) =>
+          sum.add(vector3(v).multiplyScalar(props.coefficients[i] ?? 0)),
+        new THREE.Vector3(),
+      )
+    : new THREE.Vector3();
+  const contributions = (props.solutionMode ? [] : props.vectors).map(
+    (vector, index) => {
+      const contribution = vector3(vector).multiplyScalar(
+        props.coefficients[index] ?? 0,
+      );
+      const item = makeArrow(
+        contribution,
+        origin.clone(),
+        colors[index % colors.length]!,
+        `c${index + 1}v${index + 1}`,
+      );
+      origin = origin.clone().add(contribution);
+      root.add(item.arrow);
+      if (item.label) root.add(item.label);
+      return item;
+    },
+  );
   const combination = makeArrow(
     origin,
     new THREE.Vector3(),
-    palette.red,
-    "Σcᵢvᵢ",
+    props.solutionMode ? palette.cyan : palette.red,
+    props.solutionMode ? "Ax" : "Σcᵢvᵢ",
   );
   root.add(combination.arrow);
   if (combination.label) root.add(combination.label);
@@ -305,8 +326,8 @@ function buildContent(props: Props, palette: CanvasPalette): Content {
     const target = makeArrow(
       vector3(props.target),
       new THREE.Vector3(),
-      palette.neutral,
-      "target",
+      props.solutionMode ? palette.yellow : palette.neutral,
+      props.solutionMode ? "b" : "target",
     );
     const targetLineMaterial = target.arrow.line.material as THREE.Material;
     targetLineMaterial.transparent = true;
@@ -315,7 +336,19 @@ function buildContent(props: Props, palette: CanvasPalette): Content {
     if (target.label) root.add(target.label);
     setArrow(target, 1);
   }
-  return { root, generators, contributions, combination };
+  let residual: ArrowItem | undefined;
+  if (props.solutionMode) {
+    residual = makeArrow(
+      vector3(props.target).sub(origin),
+      origin.clone(),
+      palette.red,
+      "r",
+    );
+    residual.labelFraction = 0.5;
+    root.add(residual.arrow);
+    if (residual.label) root.add(residual.label);
+  }
+  return { root, generators, contributions, combination, residual };
 }
 
 function updateContent(content: Content, progress: number) {
@@ -334,6 +367,12 @@ function updateContent(content: Content, progress: number) {
     setArrow(item, local);
   });
   setArrow(content.combination, combinationProgress);
+  if (content.residual) {
+    content.residual.origin
+      .copy(content.combination.vector)
+      .multiplyScalar(combinationProgress);
+    setArrow(content.residual, combinationProgress);
+  }
 }
 
 function dispose(root: THREE.Object3D) {
@@ -380,6 +419,31 @@ export const ThreeSpanStage = forwardRef<ThreeSpanStageHandle, Props>(
         initialProgress: 1,
       });
     const timeline = timelineRef.current;
+    useEffect(
+      () =>
+        registerStage(mountRef.current, {
+          capture: () => ({
+            progress: timeline.getSnapshot().progress,
+            speed: timeline.getSnapshot().speed,
+            camera: runtimeRef.current?.camera.position.toArray(),
+            target: runtimeRef.current?.controls.target.toArray(),
+          }),
+          restore: (view) => {
+            timeline.pause();
+            if (view.speed) timeline.setSpeed(view.speed);
+            timeline.seek(view.progress);
+            const runtime = runtimeRef.current;
+            if (runtime && view.camera && view.target) {
+              runtime.camera.position.fromArray(view.camera);
+              runtime.controls.target.fromArray(view.target);
+              runtime.controls.update();
+              runtime.renderer.render(runtime.scene, runtime.camera);
+            }
+          },
+        }),
+      [timeline],
+    );
+
     const [snapshot, setSnapshot] = useState<TimelineSnapshot>(() =>
       timeline.getSnapshot(),
     );
@@ -539,6 +603,8 @@ export const ThreeSpanStage = forwardRef<ThreeSpanStageHandle, Props>(
       contentRef.current = buildContent(
         {
           vectors: props.vectors,
+          solutionMode: props.solutionMode,
+          columnBasis: props.columnBasis,
           coefficients: props.coefficients,
           basisIndices: props.basisIndices,
           rank: props.rank,
@@ -554,6 +620,8 @@ export const ThreeSpanStage = forwardRef<ThreeSpanStageHandle, Props>(
       render();
     }, [
       props.basisIndices,
+      props.solutionMode,
+      props.columnBasis,
       props.coefficients,
       props.exportFilename,
       props.rank,

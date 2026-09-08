@@ -1,3 +1,4 @@
+import { registerStage } from "../../app/stageSession";
 import { Download, LocateFixed } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
@@ -55,6 +56,26 @@ export function ThreeEigenStage({
     controls: OrbitControls;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useEffect(
+    () =>
+      registerStage(mountRef.current, {
+        capture: () => ({
+          progress: 1,
+          camera: runtimeRef.current?.camera.position.toArray(),
+          target: runtimeRef.current?.controls.target.toArray(),
+        }),
+        restore: (view) => {
+          const runtime = runtimeRef.current;
+          if (runtime && view.camera && view.target) {
+            runtime.camera.position.fromArray(view.camera);
+            runtime.controls.target.fromArray(view.target);
+            runtime.controls.update();
+            runtime.renderer.render(runtime.scene, runtime.camera);
+          }
+        },
+      }),
+    [],
+  );
 
   const resetCamera = useCallback(() => {
     const runtime = runtimeRef.current;

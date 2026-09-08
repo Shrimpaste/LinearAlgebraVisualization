@@ -663,7 +663,7 @@ export function OperatorScene({ theme }: SceneProps) {
             )}
           </ControlSection>
 
-          <ControlSection title="算子分类" caption="以 A* 为共轭转置">
+          <ControlSection advanced title="算子分类" caption="以 A* 为共轭转置">
             <MetricList
               metrics={[
                 {
@@ -693,7 +693,11 @@ export function OperatorScene({ theme }: SceneProps) {
             />
           </ControlSection>
 
-          <ControlSection title="谱结果" caption="结构、因子与数值证书">
+          <ControlSection
+            advanced
+            title="谱结果"
+            caption="结构、因子与数值证书"
+          >
             {derived.spectral.success ? (
               <div className="operator-spectrum">
                 <SegmentedControl

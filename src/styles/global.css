@@ -274,8 +274,8 @@ select:disabled {
 
 .scene-nav__inner {
   display: grid;
-  grid-template-columns: repeat(7, minmax(118px, 1fr));
-  min-width: 826px;
+  grid-template-columns: repeat(8, minmax(118px, 1fr));
+  min-width: 944px;
   height: 100%;
 }
 
@@ -1681,8 +1681,8 @@ select:disabled {
   }
 
   .scene-nav__inner {
-    grid-template-columns: repeat(7, 112px);
-    min-width: 784px;
+    grid-template-columns: repeat(8, 112px);
+    min-width: 896px;
   }
 
   .scene-nav__item {

@@ -21,6 +21,7 @@ import { AnimationTimeline, type TimelineSnapshot } from "../../engine";
 import type { Dimension, RealMatrix, RealVector } from "../../math/nd";
 import { getCanvasPalette, type CanvasPalette } from "../../rendering";
 import { IconButton } from "../../components/ui/IconButton";
+import { registerStage } from "../../app/stageSession";
 
 export interface ThreeTransformStageHandle {
   replay(): void;
@@ -809,7 +810,59 @@ export const ThreeTransformStage = forwardRef<
     runtime.controls.update();
     renderNowRef.current();
   }, []);
+  const fitCamera = () => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const source = Math.max(1, Math.hypot(...vector));
+    const output = matrix.map((row) =>
+      row.reduce((sum, entry, index) => sum + entry * (vector[index] ?? 0), 0),
+    );
+    const radius =
+      Math.max(
+        source,
+        Math.hypot(...output),
+        ...matrix.map((row) => Math.hypot(...row)),
+      ) * 1.2;
+    const distance =
+      radius /
+      Math.sin(THREE.MathUtils.degToRad(runtime.camera.fov / 2)) /
+      Math.min(1, runtime.camera.aspect);
+    runtime.controls.maxDistance = Math.max(36, distance * 2);
+    runtime.camera.far = Math.max(100, distance * 4);
+    runtime.camera.position
+      .copy(runtime.homePosition)
+      .normalize()
+      .multiplyScalar(distance);
+    runtime.controls.target.set(0, 0, 0);
+    runtime.camera.updateProjectionMatrix();
+    runtime.controls.update();
+    renderNowRef.current();
+  };
   resetCameraRef.current = resetCamera;
+  useEffect(
+    () =>
+      registerStage(mountRef.current, {
+        capture: () => ({
+          progress: timeline.getSnapshot().progress,
+          speed: timeline.getSnapshot().speed,
+          camera: runtimeRef.current?.camera.position.toArray(),
+          target: runtimeRef.current?.controls.target.toArray(),
+        }),
+        restore: (view) => {
+          timeline.pause();
+          if (view.speed) timeline.setSpeed(view.speed);
+          timeline.seek(view.progress);
+          const runtime = runtimeRef.current;
+          if (runtime && view.camera && view.target) {
+            runtime.camera.position.fromArray(view.camera);
+            runtime.controls.target.fromArray(view.target);
+            runtime.controls.update();
+            renderNowRef.current();
+          }
+        },
+      }),
+    [timeline],
+  );
 
   useImperativeHandle(
     forwardedRef,
@@ -1174,6 +1227,14 @@ export const ThreeTransformStage = forwardRef<
           >
             <LocateFixed size={17} aria-hidden="true" />
           </IconButton>
+          <button
+            type="button"
+            className="text-button"
+            onClick={fitCamera}
+            disabled={Boolean(renderError)}
+          >
+            适配对象
+          </button>
           <IconButton
             label="导出 PNG"
             onClick={() => void exportPng()}

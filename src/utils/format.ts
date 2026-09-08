@@ -1,5 +1,10 @@
 import type { Mat2, Vec2 } from "../math";
 
+/** Compact readouts only; editable drafts and stored values retain full precision. */
+export function formatReadoutNumber(value: number) {
+  return Number.isFinite(value) ? String(Number(value.toPrecision(6))) : "—";
+}
+
 const numberFormatter = new Intl.NumberFormat("zh-CN", {
   maximumFractionDigits: 3,
   minimumFractionDigits: 0,

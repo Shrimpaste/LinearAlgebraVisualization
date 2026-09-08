@@ -4,6 +4,7 @@ import {
   inverseRealMatrix,
   multiplyRealMatrices,
   solveRealEigensystem,
+  applyRealMatrix,
   type Dimension,
   type RealMatrix,
   type RealVector,
@@ -17,6 +18,8 @@ export interface EigenState {
   readonly matrix: RealMatrix;
   readonly basisMode: EigenBasisMode;
   readonly basis: RealMatrix;
+  readonly probe?: RealVector;
+  readonly reveal?: boolean;
 }
 
 export const eigenDefaults: EigenState = {
@@ -96,6 +99,13 @@ export function migrateEigenState(stored: unknown): EigenState {
     matrix: coerceMatrix(record.matrix, size, identityRealMatrix(size)),
     basisMode: record.basisMode === "custom" ? "custom" : "standard",
     basis: coerceMatrix(record.basis, size, identityRealMatrix(size)),
+    probe: Array.from({ length: size }, (_, index) =>
+      finite(
+        Array.isArray(record.probe) ? record.probe[index] : undefined,
+        index === 0 ? 1.5 : 0.4,
+      ),
+    ),
+    reveal: record.reveal !== false,
   };
 }
 
@@ -115,6 +125,10 @@ export function resizeEigenState(
     dimension: size,
     matrix: resizeWithIdentity(state.matrix),
     basis: resizeWithIdentity(state.basis),
+    probe: Array.from(
+      { length: size },
+      (_, index) => state.probe?.[index] ?? (index === 0 ? 1.5 : 0.4),
+    ),
   };
 }
 
@@ -246,4 +260,28 @@ export function deriveEigen(state: EigenState) {
     ? solveRealEigensystem(physicalMatrix)
     : null;
   return { basisAnalysis, physicalMatrix, eigensystem } as const;
+}
+
+export function eigenProbe(
+  matrix: RealMatrix,
+  vector: RealVector,
+  progress = 1,
+) {
+  const mapped = applyRealMatrix(matrix, vector);
+  const norm = Math.hypot(...vector);
+  const mappedNorm = Math.hypot(...mapped);
+  const dot = vector.reduce((sum, value, i) => sum + value * mapped[i]!, 0);
+  const lambda = norm > 0 ? dot / (norm * norm) : 0;
+  const residual =
+    norm > 0
+      ? Math.hypot(...mapped.map((value, i) => value - lambda * vector[i]!)) /
+        Math.max(mappedNorm, norm)
+      : Infinity;
+  return {
+    mapped,
+    animated: vector.map((value, i) => value + (mapped[i]! - value) * progress),
+    lambda,
+    residual,
+    isEigenvector: norm > 1e-10 && residual < 0.015,
+  };
 }

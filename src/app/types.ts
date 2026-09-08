@@ -7,7 +7,8 @@ export type SceneId =
   | "inner-product"
   | "determinant"
   | "operator"
-  | "decomposition";
+  | "decomposition"
+  | "systems";
 
 export type ThemeMode = "light" | "dark";
 

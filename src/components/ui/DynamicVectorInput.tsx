@@ -1,4 +1,5 @@
 import { NumberField } from "./NumberField";
+import { PrecisionDetails } from "./PrecisionDetails";
 import type { DynamicInputDimension } from "./DynamicMatrixInput";
 
 export interface DynamicVectorValue {
@@ -45,6 +46,18 @@ export function DynamicVectorInput({
       className="vector-editor"
       data-tone={tone}
       data-disabled={disabled || undefined}
+      onFocusCapture={() =>
+        window.dispatchEvent(new CustomEvent("basis-focus", { detail: name }))
+      }
+      onBlurCapture={() =>
+        window.dispatchEvent(new CustomEvent("basis-focus", { detail: null }))
+      }
+      onPointerEnter={() =>
+        window.dispatchEvent(new CustomEvent("basis-focus", { detail: name }))
+      }
+      onPointerLeave={() =>
+        window.dispatchEvent(new CustomEvent("basis-focus", { detail: null }))
+      }
       style={{
         gridTemplateColumns: `42px repeat(${value.dimension}, minmax(0, 1fr))`,
       }}
@@ -64,6 +77,7 @@ export function DynamicVectorInput({
           />
         );
       })}
+      {disabled && <PrecisionDetails values={entries} />}
     </div>
   );
 }

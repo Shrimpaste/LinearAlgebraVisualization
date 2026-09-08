@@ -20,6 +20,22 @@ function Harness({ disabled = false }: { disabled?: boolean }) {
 }
 
 describe("NumberField", () => {
+  it("rounds only disabled display while retaining the exact accessible value", () => {
+    const value = Math.SQRT1_2;
+    render(
+      <NumberField
+        label="只读结果"
+        value={value}
+        onChange={() => undefined}
+        disabled
+      />,
+    );
+    expect(screen.getByLabelText("只读结果")).toHaveValue("0.707107");
+    expect(screen.getByLabelText("只读结果")).toHaveAttribute(
+      "aria-valuenow",
+      String(value),
+    );
+  });
   it("preserves a transient minus sign and commits a negative value", () => {
     render(<Harness />);
     const input = screen.getByLabelText("测试数值");

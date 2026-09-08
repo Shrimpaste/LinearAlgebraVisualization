@@ -1,4 +1,5 @@
 import { NumberField } from "./NumberField";
+import { PrecisionDetails } from "./PrecisionDetails";
 import type { ComplexValue } from "./ComplexMatrixInput";
 import type { DynamicInputDimension } from "./DynamicMatrixInput";
 
@@ -74,6 +75,11 @@ export function ComplexVectorInput({
           );
         })}
       </div>
+      {disabled && (
+        <PrecisionDetails
+          values={value.entries.flatMap((entry) => [entry.real, entry.imag])}
+        />
+      )}
     </div>
   );
 }

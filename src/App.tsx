@@ -11,13 +11,26 @@ import { isSceneId, scenes } from "./app/sceneRegistry";
 import type { SceneId, ThemeMode } from "./app/types";
 import { IconButton } from "./components/ui/IconButton";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+import {
+  decodeExperiment,
+  validateExperiment,
+  sceneKey,
+  type Experiment,
+} from "./app/experiments";
+import { queueStageView } from "./app/stageSession";
 
 function sceneFromHash(): SceneId {
-  const value = window.location.hash.replace(/^#\/?/, "");
+  const value = window.location.hash.replace(/^#\/?/, "").split("?")[0]!;
   return isSceneId(value) ? value : "transform";
 }
 
 export function App() {
+  const [restoring, setRestoring] = useState(
+    window.location.hash.includes("?experiment="),
+  );
+  const [sceneRevision, setSceneRevision] = useState(0);
+  const [notice, setNotice] = useState("");
+  const importRevision = useRef(0);
   const [activeScene, setActiveScene] = useState<SceneId>(sceneFromHash);
   const navigationRef = useRef<HTMLElement>(null);
   const appContentRef = useRef<HTMLDivElement>(null);
@@ -29,6 +42,57 @@ export function App() {
     "light",
   );
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    const restore = async (promise: Promise<Experiment>) => {
+      const revision = ++importRevision.current;
+      setRestoring(true);
+      try {
+        const experiment = await promise;
+        if (disposed || revision !== importRevision.current) return;
+        localStorage.setItem(
+          sceneKey(experiment.scene),
+          JSON.stringify(experiment.state),
+        );
+        queueStageView(experiment.scene, experiment.view);
+        setActiveScene(experiment.scene);
+        setSceneRevision((value) => value + 1);
+        window.history.replaceState(null, "", `#${experiment.scene}`);
+        setNotice(`已载入：${experiment.name}`);
+      } catch (error) {
+        if (!disposed && revision === importRevision.current)
+          setNotice(
+            error instanceof Error
+              ? error.message
+              : "实验载入失败，原参数保持。",
+          );
+      } finally {
+        if (!disposed && revision === importRevision.current)
+          setRestoring(false);
+      }
+    };
+    const fromHash = () => {
+      const query = window.location.hash.split("?")[1];
+      const encoded = new URLSearchParams(query).get("experiment");
+      if (encoded) void restore(decodeExperiment(encoded));
+      else {
+        importRevision.current++;
+        setRestoring(false);
+      }
+    };
+    const fromEvent = (event: Event) => {
+      void restore(validateExperiment((event as CustomEvent).detail));
+    };
+    window.addEventListener("hashchange", fromHash);
+    window.addEventListener("basis-open-experiment", fromEvent);
+    fromHash();
+    return () => {
+      disposed = true;
+      window.removeEventListener("hashchange", fromHash);
+      window.removeEventListener("basis-open-experiment", fromEvent);
+    };
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -65,7 +129,8 @@ export function App() {
     const activeButton = navigation?.querySelector<HTMLElement>(
       `[data-scene-id="${activeScene}"]`,
     );
-    if (navigation && activeButton) {
+    const centerNavigation = () => {
+      if (!navigation || !activeButton) return;
       const navigationRect = navigation.getBoundingClientRect();
       const activeRect = activeButton.getBoundingClientRect();
       const activeCenter =
@@ -87,7 +152,10 @@ export function App() {
         top: navigation.scrollTop,
         behavior: "auto",
       });
-    }
+    };
+    centerNavigation();
+    const navigationObserver = new ResizeObserver(centerNavigation);
+    if (navigation) navigationObserver.observe(navigation);
 
     let restoreFrame = 0;
     let contentObserver: MutationObserver | null = null;
@@ -120,12 +188,15 @@ export function App() {
     }
 
     return () => {
+      navigationObserver.disconnect();
       contentObserver?.disconnect();
       window.cancelAnimationFrame(restoreFrame);
     };
   }, [activeScene]);
 
   const selectScene = (id: SceneId) => {
+    importRevision.current++;
+    setRestoring(false);
     pendingPageScrollRef.current = {
       left: window.scrollX,
       top: window.scrollY,
@@ -135,9 +206,15 @@ export function App() {
   };
 
   const copyLink = async () => {
-    await navigator.clipboard.writeText(window.location.href);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
+    try {
+      const url = new URL(window.location.href);
+      url.hash = activeScene;
+      await navigator.clipboard.writeText(url.href);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setNotice("未能写入剪贴板，请使用浏览器地址栏复制场景链接。");
+    }
   };
 
   const ActiveScene = current.component;
@@ -155,7 +232,7 @@ export function App() {
         </div>
         <div className="header-context">
           <span>R / C</span>
-          <span>1–3D MATRIX WORKBENCH · v1.2.0-beta.3 · 待进一步测试优化</span>
+          <span>线性代数 · 从观察到理解</span>
         </div>
         <div className="header-actions">
           <IconButton
@@ -192,7 +269,23 @@ export function App() {
         </div>
       </nav>
 
-      <div ref={appContentRef} className="app-content" key={current.id}>
+      {notice && (
+        <div className="app-notice" role="status">
+          {notice}
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            aria-label="关闭通知"
+          >
+            ×
+          </button>
+        </div>
+      )}
+      <div
+        ref={appContentRef}
+        className="app-content"
+        key={`${current.id}-${sceneRevision}`}
+      >
         <Suspense
           fallback={
             <main className="scene-loading-view" role="status">
@@ -201,7 +294,13 @@ export function App() {
             </main>
           }
         >
-          <ActiveScene theme={theme} />
+          {restoring ? (
+            <div className="stage-loading" role="status">
+              正在验证并载入实验…
+            </div>
+          ) : (
+            <ActiveScene theme={theme} />
+          )}
         </Suspense>
       </div>
     </div>

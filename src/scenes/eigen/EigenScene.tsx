@@ -12,6 +12,7 @@ import {
   VisualizationStage,
   type VisualizationRenderFrame,
   type VisualizationStageHandle,
+  type VisualizationPointerEvent,
 } from "../../components/VisualizationStage";
 import { SceneLayout } from "../../components/SceneLayout";
 import { ControlSection } from "../../components/ui/ControlSection";
@@ -22,6 +23,9 @@ import { MetricList } from "../../components/ui/MetricList";
 import { Notice } from "../../components/ui/Notice";
 import { PresetGrid } from "../../components/ui/PresetGrid";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { Toggle } from "../../components/ui/Toggle";
+import { Prediction } from "../../components/ui/Prediction";
+import { isWorldPointNearCanvas } from "../../rendering/interaction";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
@@ -30,6 +34,7 @@ import {
   drawInfiniteLine,
   drawLabel,
   drawVector,
+  drawPoint,
   getCanvasPalette,
 } from "../../rendering";
 import { formatNumber } from "../../utils/format";
@@ -44,6 +49,7 @@ import {
   resizeEigenState,
   setBasisVector,
   type EigenBasisMode,
+  eigenProbe,
 } from "./model";
 
 const ThreeEigenStage = lazy(() =>
@@ -89,15 +95,74 @@ export function EigenScene({ theme }: SceneProps) {
   const eigensystem = derived.eigensystem;
   const valid = derived.physicalMatrix !== null && eigensystem !== null;
   const certified = eigensystem?.status === "real-eigenbasis";
+  const dragging = useRef(false);
+  const probeVector = useMemo(
+    () =>
+      Array.from(
+        { length: state.dimension },
+        (_, i) => state.probe?.[i] ?? (i === 0 ? 1.5 : 0.4),
+      ),
+    [state.dimension, state.probe],
+  );
+  const probe = derived.physicalMatrix
+    ? eigenProbe(derived.physicalMatrix, probeVector)
+    : null;
+  const moveProbe = (event: VisualizationPointerEvent) => {
+    if (dragging.current)
+      setState((current) => ({
+        ...current,
+        probe: current.dimension === 1 ? [event.world[0]] : [...event.world],
+      }));
+  };
 
   const render = useCallback(
-    ({ ctx, viewport, width, height }: VisualizationRenderFrame) => {
+    ({
+      ctx,
+      viewport,
+      width,
+      height,
+      easedProgress,
+    }: VisualizationRenderFrame) => {
       const palette = getCanvasPalette(theme);
       ctx.fillStyle = palette.background;
       ctx.fillRect(0, 0, width, height);
       drawGrid(ctx, viewport, palette);
       drawAxes(ctx, viewport, palette);
       if (!eigensystem || !derived.physicalMatrix) return;
+      const experiment = eigenProbe(
+        derived.physicalMatrix,
+        probeVector,
+        easedProgress,
+      );
+      const point = [probeVector[0]!, probeVector[1] ?? 0] as const;
+      drawVector(ctx, viewport, point, {
+        color: palette.blue,
+        label: "候选 v",
+        dash: [4, 3],
+        width: 2,
+        labelOffset: [8, 20],
+      });
+      drawPoint(
+        ctx,
+        viewport,
+        point,
+        palette.blue,
+        5,
+        true,
+        palette.background,
+      );
+      drawVector(
+        ctx,
+        viewport,
+        [experiment.animated[0]!, experiment.animated[1] ?? 0],
+        {
+          color: palette.red,
+          label: "当前 v(t) → Av",
+          width: 3,
+          labelOffset: [8, -24],
+        },
+      );
+      if (state.reveal === false) return;
       if (state.dimension === 1) {
         const value = eigensystem.eigenvalues[0]?.re ?? 0;
         drawVector(ctx, viewport, [1.4, 0], {
@@ -105,11 +170,16 @@ export function EigenScene({ theme }: SceneProps) {
           label: "v₁",
           width: 2.4,
         });
-        drawVector(ctx, viewport, [1.4 * value, 0], {
-          color: palette.red,
-          label: "T(v₁)",
-          width: 2.8,
-        });
+        drawVector(
+          ctx,
+          viewport,
+          [1.4 * (1 + (value - 1) * easedProgress), 0],
+          {
+            color: palette.red,
+            label: "T(v₁)",
+            width: 2.8,
+          },
+        );
         return;
       }
       if (eigensystem.status === "complex") {
@@ -117,7 +187,7 @@ export function EigenScene({ theme }: SceneProps) {
           ctx,
           viewport,
           [-1.45, 1.65],
-          "无可认证实特征几何",
+          "无实特征方向：拖动候选 v，观察 Av 偏离原直线",
           palette.red,
           [0, 0],
         );
@@ -137,15 +207,31 @@ export function EigenScene({ theme }: SceneProps) {
           width: 2.4,
         });
         const mapped = applyRealMatrix(derived.physicalMatrix!, pair.vector);
-        drawVector(ctx, viewport, [mapped[0]!, mapped[1]!], {
-          color: palette.red,
-          label: `T(v${index + 1})`,
-          width: 2.2,
-          alpha: 0.82,
-        });
+        drawVector(
+          ctx,
+          viewport,
+          [
+            vector[0] + (mapped[0]! - vector[0]) * easedProgress,
+            vector[1] + (mapped[1]! - vector[1]) * easedProgress,
+          ],
+          {
+            color: palette.red,
+            label: `T(v${index + 1})`,
+            width: 2.2,
+            alpha: 0.82,
+            labelOffset: [12, 22 + index * 12],
+          },
+        );
       });
     },
-    [derived.physicalMatrix, eigensystem, state.dimension, theme],
+    [
+      derived.physicalMatrix,
+      eigensystem,
+      state.dimension,
+      state.reveal,
+      probeVector,
+      theme,
+    ],
   );
 
   const setMode = (basisMode: EigenBasisMode) => {
@@ -217,6 +303,21 @@ export function EigenScene({ theme }: SceneProps) {
             renderKey={state}
             viewport={{ scale: isMobile ? 55 : 76, center: [0, 0] }}
             duration={800}
+            onPointerDown={(event) => {
+              dragging.current = isWorldPointNearCanvas(
+                [probeVector[0]!, probeVector[1] ?? 0],
+                event.canvas,
+                event.viewport,
+              );
+              return dragging.current;
+            }}
+            onPointerMove={moveProbe}
+            onPointerUp={() => {
+              dragging.current = false;
+            }}
+            onPointerCancel={() => {
+              dragging.current = false;
+            }}
             ariaLabel={`${state.dimension}维实线性算子的认证特征方向`}
             fallbackDescription={`${formula}。${certified ? "存在认证实特征基。" : unavailable}`}
             showExportButton
@@ -288,6 +389,7 @@ export function EigenScene({ theme }: SceneProps) {
             />
           </ControlSection>
           <ControlSection
+            advanced
             title="共享自定义基 Q"
             caption="按顺序输入 Q = (q₁, …, qₙ)；同一 Q 同时用于定义域与陪域"
           >
@@ -316,7 +418,45 @@ export function EigenScene({ theme }: SceneProps) {
               </Notice>
             )}
           </ControlSection>
+          {state.dimension < 3 && (
+            <ControlSection
+              title="寻找特征方向"
+              caption="拖动蓝色候选 v：Av 是否仍在同一直线上？负特征值允许反向，零向量不算特征向量。"
+            >
+              <DynamicVectorInput
+                label="候选 v"
+                name="probe"
+                value={{ dimension: state.dimension, entries: probeVector }}
+                onChange={(value) =>
+                  setState((current) => ({ ...current, probe: value.entries }))
+                }
+                tone="blue"
+              />
+              <details className="challenge-card">
+                <summary>预测与检验</summary>
+                <Prediction
+                  question="Av与v方向相反，v可能是特征向量吗？"
+                  options={["可能，λ为负", "不可能"]}
+                  correct={0}
+                  explanation="特征方向是一条直线；λ为负时沿同一直线反向。零向量不能作为特征向量。"
+                />
+              </details>
+              <Toggle
+                label="揭示特征方向"
+                checked={state.reveal !== false}
+                onChange={(reveal) =>
+                  setState((current) => ({ ...current, reveal }))
+                }
+              />
+              <Notice tone={probe?.isEigenvector ? "success" : "info"}>
+                {probe?.isEigenvector
+                  ? `找到近似特征方向：λ ≈ ${formatNumber(probe.lambda)}。`
+                  : "继续调整候选方向，观察它与 Av 是否共线。"}
+              </Notice>
+            </ControlSection>
+          )}
           <ControlSection
+            advanced
             title="认证实特征基"
             caption="显示顺序定义 P = (v₁, …, vₙ)，不计算 Jordan 形"
           >

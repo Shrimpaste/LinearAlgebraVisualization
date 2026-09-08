@@ -1,0 +1,457 @@
+/* Learning layer: quiet paper, readable mathematics, one visible operation. */
+.precision-details {
+  grid-column: 1 / -1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.precision-details summary {
+  cursor: pointer;
+}
+.precision-details code {
+  display: block;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+  line-height: 1.7;
+}
+.dimension-label {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+.operator-lesson-rail__steps small,
+.three-operator-stage__legend span {
+  font-size: 11px;
+}
+.operator-lesson-rail__steps strong {
+  font-size: 12px;
+}
+:root {
+  --inspector-width: 380px;
+}
+.control-section__header h2 {
+  font-size: 14px;
+}
+.control-section__header p,
+.insight-strip > div {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.formula-readout__label,
+.formula-readout__status,
+.metric-list dt {
+  font-size: 11px;
+  text-transform: none;
+}
+.metric-list dd {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  font-size: 13px;
+}
+.axiom-checklist small,
+.axiom-checklist output,
+.operator-math-matrix__grid span {
+  font-size: 12px;
+  white-space: normal;
+}
+.number-field input {
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+.number-field input:disabled,
+.matrix-editor[data-disabled] {
+  opacity: 1;
+  color: var(--ink-soft);
+}
+.vector-editor[data-disabled] {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 8px;
+}
+.vector-editor[data-disabled] > .vector-editor__label {
+  grid-column: 1 / -1;
+  white-space: normal;
+  font-size: 12px;
+}
+.workspace-mode {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.learning-guide {
+  padding: 18px;
+  background: var(--cyan-soft);
+  border-bottom: 1px solid var(--cyan);
+}
+.learning-guide small {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.learning-guide h2 {
+  font-size: 19px;
+  line-height: 1.5;
+  margin: 10px 0 16px;
+}
+.learning-guide p,
+.prediction p,
+.challenge-card p {
+  font-size: 14px;
+  line-height: 1.65;
+}
+.lesson-dots {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.lesson-dots button {
+  padding: 8px 4px;
+  border: 1px solid var(--cyan);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.lesson-dots button[aria-pressed="true"],
+.prediction button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+.lesson-transfer {
+  border-left: 2px solid var(--cyan);
+  padding-left: 12px;
+}
+.control-section--advanced summary,
+.challenge-card summary {
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.control-section--advanced summary span {
+  float: right;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.control-section--advanced > p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.control-section--advanced[open] summary {
+  margin-bottom: 14px;
+}
+.current-frame-readout {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  background: var(--cyan-soft);
+  font-size: 14px;
+}
+.current-frame-readout span {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.challenge-card {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--cyan);
+  border-radius: 3px;
+}
+.challenge-card > strong {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.challenge-card .text-button {
+  margin-top: 6px;
+}
+.prediction {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.prediction > div {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.text-button {
+  white-space: normal;
+  line-height: 1.5;
+}
+.scene-header {
+  gap: 14px;
+}
+.formula-readout {
+  gap: 9px;
+}
+.formula-readout strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.header-context span:last-child {
+  max-width: 360px;
+}
+.app-content {
+  animation: none;
+}
+.mobile-note {
+  display: none;
+}
+.experiment-toolbar {
+  padding: 6px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.experiment-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.experiment-quick-actions > span {
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+.experiment-toolbar summary {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 0;
+}
+.experiment-actions {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+.experiment-actions label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.experiment-actions input,
+.experiment-actions select {
+  min-width: 0;
+  width: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  min-height: 38px;
+  padding: 8px;
+}
+.experiment-actions small {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.experiment-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.snapshot-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+.snapshot-row span {
+  overflow-wrap: anywhere;
+}
+.experiment-message {
+  font-size: 13px;
+  color: var(--cyan);
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+.app-notice {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 50;
+  max-width: calc(100vw - 32px);
+  background: var(--paper-raised);
+  border: 1px solid var(--cyan);
+  box-shadow: 0 4px 20px var(--shadow);
+  padding: 12px;
+  font-size: 14px;
+}
+.app-notice button {
+  margin-left: 12px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+@media (min-width: 761px) and (max-width: 1100px) {
+  :root {
+    --inspector-width: 340px;
+  }
+  .scene-header {
+    grid-template-columns: 1fr;
+  }
+  .formula-readout {
+    border-left: 0;
+    padding-left: 0;
+  }
+}
+@media (max-width: 760px) {
+  body {
+    overflow: hidden;
+  }
+  .app-shell {
+    display: grid;
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: 54px 48px minmax(0, 1fr);
+  }
+  .app-header,
+  .scene-nav {
+    position: relative;
+    top: auto;
+  }
+  .app-content {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .scene-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 46%) minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+  }
+  .stage-column {
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .scene-header {
+    gap: 4px;
+    padding: 7px 12px;
+    min-height: 0;
+  }
+  .scene-heading h1 {
+    font-size: 16px;
+  }
+  .scene-heading p {
+    display: none;
+  }
+  .formula-readout {
+    padding-top: 4px;
+    gap: 4px 8px;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .formula-readout strong {
+    font-size: 12px;
+  }
+  .formula-readout__status {
+    display: none;
+  }
+  .stage-slot,
+  .dimension-stage,
+  .operator-stage-shell__viewport {
+    min-height: 0;
+  }
+  .visualization-stage__viewport,
+  .three-transform-stage__viewport {
+    min-height: 0 !important;
+  }
+  .insight-strip {
+    display: none;
+  }
+  .inspector {
+    overflow-y: auto;
+    min-height: 0;
+    overscroll-behavior-y: contain;
+  }
+  .workspace-mode {
+    padding: 8px 12px;
+  }
+  .mobile-note {
+    display: block;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .control-section {
+    padding: 14px;
+  }
+  .learning-guide {
+    padding: 14px;
+  }
+  .visualization-stage__view-controls {
+    top: 4px !important;
+    right: 4px !important;
+    padding: 0;
+  }
+  .visualization-stage__transport {
+    min-height: 44px;
+    padding: 2px 6px;
+  }
+  .operator-lesson-rail__steps button {
+    min-height: 42px;
+  }
+  .operator-lesson-rail__steps small {
+    display: none;
+  }
+  .operator-lesson-rail {
+    flex-shrink: 0;
+  }
+  .three-transform-stage__transport {
+    min-height: 44px;
+  }
+}
+@media (max-width: 760px) and (max-height: 560px) {
+  .scene-layout {
+    grid-template-rows: minmax(120px, 40%) minmax(0, 1fr);
+  }
+  .scene-header {
+    display: none;
+  }
+}
+
+/* Three-dimensional stages share the same readable transport layout. */
+:is(
+    .three-span-stage,
+    .three-inner-product-stage,
+    .three-operator-stage,
+    .three-transform-stage
+  )
+  .visualization-stage__transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 48px;
+  padding: 6px 12px;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+}
+:is(
+    .three-span-stage,
+    .three-inner-product-stage,
+    .three-operator-stage,
+    .three-transform-stage
+  )
+  .visualization-stage__scrubber {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--cyan);
+}
+:is(
+    .three-span-stage,
+    .three-inner-product-stage,
+    .three-operator-stage,
+    .three-transform-stage
+  )
+  .visualization-stage__transport
+  output {
+  font-size: 12px;
+  min-width: 36px;
+}
+.nullspace-vector {
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}

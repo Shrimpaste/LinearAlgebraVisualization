@@ -35,6 +35,7 @@ import {
   resizeCanvas,
 } from "../engine";
 import { IconButton } from "./ui/IconButton";
+import { registerStage } from "../app/stageSession";
 
 export interface VisualizationRenderFrame {
   readonly ctx: CanvasRenderingContext2D;
@@ -629,6 +630,27 @@ export const VisualizationStage = forwardRef<
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(
+    () =>
+      registerStage(canvasRef.current, {
+        capture: () => ({
+          progress: timeline.getSnapshot().progress,
+          speed: timeline.getSnapshot().speed,
+          center: [...viewport.center] as [number, number],
+          scale: viewport.scale,
+        }),
+        restore: (view) => {
+          timeline.pause();
+          if (view.speed) timeline.setSpeed(view.speed);
+          if (view.center) viewport.setCenter(view.center);
+          if (view.scale) viewport.setScale(view.scale);
+          timeline.seek(view.progress);
+          requestRender();
+        },
+      }),
+    [timeline, viewport, requestRender],
+  );
 
   useEffect(() => {
     const unsubscribe = timeline.subscribe((snapshot) => {
